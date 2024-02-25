@@ -12,6 +12,8 @@
 // implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//go:build !windows
+// +build !windows
 
 package server
 
@@ -105,4 +107,10 @@ func setsockoptIpTtl(sc syscall.RawConn, family int, value int) error {
 		name = syscall.IPV6_UNICAST_HOPS
 	}
 	return setsockOptInt(sc, level, name, value)
+}
+
+func setsockoptTcpMss(sc syscall.RawConn, family int, value uint16) error {
+	level := syscall.IPPROTO_TCP
+	name := syscall.TCP_MAXSEG
+	return setsockOptInt(sc, level, name, int(value))
 }

@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package api
 
 import "encoding/json"
@@ -16,7 +19,7 @@ type ExportedServicesConfigEntry struct {
 
 	// Services is a list of services to be exported and the list of partitions
 	// to expose them to.
-	Services []ExportedService
+	Services []ExportedService `json:",omitempty"`
 
 	Meta map[string]string `json:",omitempty"`
 
@@ -40,19 +43,26 @@ type ExportedService struct {
 	Namespace string `json:",omitempty"`
 
 	// Consumers is a list of downstream consumers of the service to be exported.
-	Consumers []ServiceConsumer
+	Consumers []ServiceConsumer `json:",omitempty"`
 }
 
 // ServiceConsumer represents a downstream consumer of the service to be exported.
+// At most one of Partition or Peer must be specified.
 type ServiceConsumer struct {
 	// Partition is the admin partition to export the service to.
-	Partition string
+	Partition string `json:",omitempty"`
+
+	// Peer is the name of the peer to export the service to.
+	Peer string `json:",omitempty" alias:"peer_name"`
+
+	// SamenessGroup is the name of the sameness group to export the service to.
+	SamenessGroup string `json:",omitempty" alias:"sameness_group"`
 }
 
 func (e *ExportedServicesConfigEntry) GetKind() string            { return ExportedServices }
 func (e *ExportedServicesConfigEntry) GetName() string            { return e.Name }
 func (e *ExportedServicesConfigEntry) GetPartition() string       { return e.Name }
-func (e *ExportedServicesConfigEntry) GetNamespace() string       { return IntentionDefaultNamespace }
+func (e *ExportedServicesConfigEntry) GetNamespace() string       { return "" }
 func (e *ExportedServicesConfigEntry) GetMeta() map[string]string { return e.Meta }
 func (e *ExportedServicesConfigEntry) GetCreateIndex() uint64     { return e.CreateIndex }
 func (e *ExportedServicesConfigEntry) GetModifyIndex() uint64     { return e.ModifyIndex }

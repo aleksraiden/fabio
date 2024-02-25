@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/circonus-labs/go-apiclient/config"
@@ -21,12 +22,11 @@ import (
 // CheckBundleMetric individual metric configuration
 type CheckBundleMetric struct {
 	Name   string   `json:"name"`             // string
-	Result *string  `json:"result,omitempty"` // string or null, NOTE not settable - return/information value only
-	Status string   `json:"status,omitempty"` // string
-	Tags   []string `json:"tags"`             // [] len >= 0
 	Type   string   `json:"type"`             // string
+	Status string   `json:"status,omitempty"` // string
+	Result *string  `json:"result,omitempty"` // string or null, NOTE not settable - return/information value only
 	Units  *string  `json:"units,omitempty"`  // string or null
-
+	Tags   []string `json:"tags"`             // [] len >= 0
 }
 
 // CheckBundleConfig contains the check type specific configuration settings
@@ -36,26 +36,26 @@ type CheckBundleConfig map[config.Key]string
 
 // CheckBundle defines a check bundle. See https://login.circonus.com/resources/api/calls/check_bundle for more information.
 type CheckBundle struct {
+	CID                string              `json:"_cid,omitempty"`                     // string
+	Status             string              `json:"status,omitempty"`                   // string
+	DisplayName        string              `json:"display_name"`                       // string
+	LastModifedBy      string              `json:"_last_modifed_by,omitempty"`         // string
+	Target             string              `json:"target"`                             // string
+	Type               string              `json:"type"`                               // string
+	Notes              *string             `json:"notes,omitempty"`                    // string or null
+	Config             CheckBundleConfig   `json:"config"`                             // NOTE contents of config are check type specific, map len >= 0
 	Brokers            []string            `json:"brokers"`                            // [] len >= 0
 	Checks             []string            `json:"_checks,omitempty"`                  // [] len >= 0
 	CheckUUIDs         []string            `json:"_check_uuids,omitempty"`             // [] len >= 0
-	CID                string              `json:"_cid,omitempty"`                     // string
-	Config             CheckBundleConfig   `json:"config"`                             // NOTE contents of config are check type specific, map len >= 0
-	Created            uint                `json:"_created,omitempty"`                 // uint
-	DisplayName        string              `json:"display_name"`                       // string
-	LastModifedBy      string              `json:"_last_modifed_by,omitempty"`         // string
-	LastModified       uint                `json:"_last_modified,omitempty"`           // uint
-	MetricFilters      [][]string          `json:"metric_filters,omitempty"`           // [][type,rule_regx,comment]
-	MetricLimit        int                 `json:"metric_limit,omitempty"`             // int
-	Metrics            []CheckBundleMetric `json:"metrics"`                            // [] >= 0
-	Notes              *string             `json:"notes,omitempty"`                    // string or null
-	Period             uint                `json:"period,omitempty"`                   // uint
 	ReverseConnectURLs []string            `json:"_reverse_connection_urls,omitempty"` // [] len >= 0
-	Status             string              `json:"status,omitempty"`                   // string
 	Tags               []string            `json:"tags,omitempty"`                     // [] len >= 0
-	Target             string              `json:"target"`                             // string
+	MetricFilters      [][]string          `json:"metric_filters,omitempty"`           // [][type,rule_regx,comment]
+	Metrics            []CheckBundleMetric `json:"metrics"`                            // [] >= 0
 	Timeout            float32             `json:"timeout,omitempty"`                  // float32
-	Type               string              `json:"type"`                               // string
+	Period             uint                `json:"period,omitempty"`                   // uint
+	Created            uint                `json:"_created,omitempty"`                 // uint
+	LastModified       uint                `json:"_last_modified,omitempty"`           // uint
+	MetricLimit        int                 `json:"metric_limit,omitempty"`             // int
 }
 
 // NewCheckBundle returns new CheckBundle (with defaults, if applicable)
@@ -138,6 +138,10 @@ func (a *API) UpdateCheckBundle(cfg *CheckBundle) (*CheckBundle, error) {
 		return nil, errors.Errorf("invalid check bundle CID (%s)", bundleCID)
 	}
 
+	if len(cfg.Tags) > 0 {
+		cfg.Tags = fixTags(cfg.Tags)
+	}
+
 	jsonCfg, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, err
@@ -164,6 +168,10 @@ func (a *API) UpdateCheckBundle(cfg *CheckBundle) (*CheckBundle, error) {
 func (a *API) CreateCheckBundle(cfg *CheckBundle) (*CheckBundle, error) {
 	if cfg == nil {
 		return nil, errors.New("invalid check bundle config (nil)")
+	}
+
+	if len(cfg.Tags) > 0 {
+		cfg.Tags = fixTags(cfg.Tags)
 	}
 
 	jsonCfg, err := json.Marshal(cfg)
@@ -265,4 +273,33 @@ func (a *API) SearchCheckBundles(searchCriteria *SearchQueryType, filterCriteria
 	}
 
 	return &results, nil
+}
+
+func fixTags(tags []string) []string {
+	if len(tags) == 0 {
+		return tags
+	}
+
+	unique := make(map[string]bool)
+	var result []string
+
+	for _, tag := range tags {
+		// remove blanks
+		if tag == "" {
+			continue
+		}
+
+		// lowercase
+		tag = strings.ToLower(tag)
+
+		// remove duplicates
+		if _, found := unique[tag]; !found {
+			unique[tag] = true
+			result = append(result, tag)
+		}
+	}
+
+	sort.Strings(result)
+
+	return result
 }
