@@ -2,7 +2,7 @@ package metrics
 
 import (
 	"fmt"
-	"github.com/fabiolb/fabio/config"
+	"github.com/aleksraiden/fabio/config"
 	gkm "github.com/go-kit/kit/metrics"
 	"log"
 	"strings"

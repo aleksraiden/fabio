@@ -11,8 +11,8 @@ import (
 	"net"
 	"os"
 
-	"github.com/fabiolb/fabio/config"
-	"github.com/fabiolb/fabio/exit"
+	"github.com/aleksraiden/fabio/config"
+	"github.com/aleksraiden/fabio/exit"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

@@ -530,7 +530,7 @@ func parseListen(cfg map[string]string, cs map[string]CertSource, readTimeout, w
 	}
 	if l.ProxyProto && l.ProxyHeaderTimeout == 0 {
 		// We should define a safe default if proxy-protocol was enabled but no header timeout was set.
-		// See https://github.com/fabiolb/fabio/issues/524 for more information.
+		// See https://github.com/aleksraiden/fabio/issues/524 for more information.
 		l.ProxyHeaderTimeout = 250 * time.Millisecond
 	}
 	return

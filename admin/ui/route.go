@@ -4,7 +4,7 @@ import (
 	"html/template"
 	"net/http"
 
-	"github.com/fabiolb/fabio/config"
+	"github.com/aleksraiden/fabio/config"
 )
 
 // RoutesHandler provides the UI for managing the routing table.
@@ -67,8 +67,8 @@ var tmplRoutes = template.Must(template.New("routes").Parse( // language=HTML
 			<a href="/" class="brand-logo">fabio{{if .Title}} - {{.Title}}{{end}}</a>
 			<ul id="nav-mobile" class="right hide-on-med-and-down">
 				<li><a class="dropdown-trigger dropdown-button" href="#" data-target="overrides">Overrides<i class="material-icons right">arrow_drop_down</i></a></li>
-				<li><a href="https://github.com/fabiolb/fabio/blob/master/CHANGELOG.md">{{.Version}}</a></li>
-				<li><a href="https://github.com/fabiolb/fabio">Github</a></li>
+				<li><a href="https://github.com/aleksraiden/fabio/blob/master/CHANGELOG.md">{{.Version}}</a></li>
+				<li><a href="https://github.com/aleksraiden/fabio">Github</a></li>
 			</ul>
 		</div>
 	</div>

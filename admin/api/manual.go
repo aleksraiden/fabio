@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/fabiolb/fabio/registry"
+	"github.com/aleksraiden/fabio/registry"
 )
 
 // ManualHandler provides a fetch and update handler for the manual overrides api.

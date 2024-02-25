@@ -2,7 +2,7 @@ package bgp
 
 import (
 	"errors"
-	"github.com/fabiolb/fabio/config"
+	"github.com/aleksraiden/fabio/config"
 )
 
 type BGPHandler struct{}

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fabiolb/fabio/config"
-	"github.com/fabiolb/fabio/route"
+	"github.com/aleksraiden/fabio/config"
+	"github.com/aleksraiden/fabio/route"
 
 	gkm "github.com/go-kit/kit/metrics"
 	grpc_proxy "github.com/mwitkow/grpc-proxy/proxy"

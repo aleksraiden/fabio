@@ -2,7 +2,7 @@ package transport
 
 import (
 	"crypto/tls"
-	"github.com/fabiolb/fabio/config"
+	"github.com/aleksraiden/fabio/config"
 	"net"
 	"net/http"
 )

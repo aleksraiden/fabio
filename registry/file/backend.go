@@ -6,9 +6,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/fabiolb/fabio/config"
-	"github.com/fabiolb/fabio/registry"
-	"github.com/fabiolb/fabio/registry/static"
+	"github.com/aleksraiden/fabio/config"
+	"github.com/aleksraiden/fabio/registry"
+	"github.com/aleksraiden/fabio/registry/static"
 )
 
 func NewBackend(cfg *config.File) (registry.Backend, error) {

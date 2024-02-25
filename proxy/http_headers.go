@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/fabiolb/fabio/config"
+	"github.com/aleksraiden/fabio/config"
 )
 
 // addResponseHeaders adds/updates headers in the response

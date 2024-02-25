@@ -12,10 +12,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/fabiolb/fabio/config"
-	"github.com/fabiolb/fabio/proxy/tcp"
-	"github.com/fabiolb/fabio/proxy/tcp/tcptest"
-	"github.com/fabiolb/fabio/route"
+	"github.com/aleksraiden/fabio/config"
+	"github.com/aleksraiden/fabio/proxy/tcp"
+	"github.com/aleksraiden/fabio/proxy/tcp/tcptest"
+	"github.com/aleksraiden/fabio/route"
 )
 
 // to run this test, add the following to /etc/hosts:

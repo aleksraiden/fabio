@@ -3,7 +3,7 @@ package auth
 import (
 	"testing"
 
-	"github.com/fabiolb/fabio/config"
+	"github.com/aleksraiden/fabio/config"
 )
 
 func TestLoadAuthSchemes(t *testing.T) {

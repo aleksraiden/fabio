@@ -5,7 +5,7 @@ import (
 	"crypto/x509"
 	"fmt"
 
-	"github.com/fabiolb/fabio/config"
+	"github.com/aleksraiden/fabio/config"
 	"golang.org/x/sync/singleflight"
 )
 

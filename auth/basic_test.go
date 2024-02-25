@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fabiolb/fabio/config"
-	"github.com/fabiolb/fabio/uuid"
+	"github.com/aleksraiden/fabio/config"
+	"github.com/aleksraiden/fabio/uuid"
 )
 
 type responseWriter struct {

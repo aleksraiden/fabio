@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fabiolb/fabio/cert"
-	"github.com/fabiolb/fabio/config"
-	"github.com/fabiolb/fabio/proxy/internal"
-	"github.com/fabiolb/fabio/proxy/tcp"
-	"github.com/fabiolb/fabio/proxy/tcp/tcptest"
-	"github.com/fabiolb/fabio/route"
+	"github.com/aleksraiden/fabio/cert"
+	"github.com/aleksraiden/fabio/config"
+	"github.com/aleksraiden/fabio/proxy/internal"
+	"github.com/aleksraiden/fabio/proxy/tcp"
+	"github.com/aleksraiden/fabio/proxy/tcp/tcptest"
+	"github.com/aleksraiden/fabio/route"
 )
 
 var echoHandler tcp.HandlerFunc = func(c net.Conn) error {

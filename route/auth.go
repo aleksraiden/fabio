@@ -4,7 +4,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/fabiolb/fabio/auth"
+	"github.com/aleksraiden/fabio/auth"
 )
 
 func (t *Target) Authorized(r *http.Request, w http.ResponseWriter, authSchemes map[string]auth.AuthScheme) bool {

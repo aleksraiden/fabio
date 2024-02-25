@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/fabiolb/fabio/assert"
+	"github.com/aleksraiden/fabio/assert"
 )
 
 var contentTypes = regexp.MustCompile(`^(text/.*|application/(javascript|json|font-woff|xml)|.*\+(json|xml))(;.*)?$`)
