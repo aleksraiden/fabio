@@ -5,7 +5,7 @@ import (
 	"crypto/x509"
 	"os"
 
-	"github.com/aleksraiden/fabio/exit"
+	"github.com/fabiolb/fabio/exit"
 )
 
 // FileSource implements a certificate source for one

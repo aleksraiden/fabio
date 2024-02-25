@@ -13,14 +13,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aleksraiden/fabio/auth"
-	"github.com/aleksraiden/fabio/config"
-	"github.com/aleksraiden/fabio/logger"
-	"github.com/aleksraiden/fabio/noroute"
-	"github.com/aleksraiden/fabio/proxy/gzip"
-	"github.com/aleksraiden/fabio/route"
-	"github.com/aleksraiden/fabio/trace"
-	"github.com/aleksraiden/fabio/uuid"
+	"github.com/fabiolb/fabio/auth"
+	"github.com/fabiolb/fabio/config"
+	"github.com/fabiolb/fabio/logger"
+	"github.com/fabiolb/fabio/noroute"
+	"github.com/fabiolb/fabio/proxy/gzip"
+	"github.com/fabiolb/fabio/route"
+	"github.com/fabiolb/fabio/trace"
+	"github.com/fabiolb/fabio/uuid"
 )
 
 type HttpStatsHandler struct {

@@ -5,7 +5,7 @@ package bgp
 import (
 	"context"
 	"encoding/json"
-	"github.com/aleksraiden/fabio/config"
+	"github.com/fabiolb/fabio/config"
 	api "github.com/osrg/gobgp/v3/api"
 	"os"
 	"os/exec"

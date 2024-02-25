@@ -3,8 +3,8 @@ package custom
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/aleksraiden/fabio/config"
-	"github.com/aleksraiden/fabio/route"
+	"github.com/fabiolb/fabio/config"
+	"github.com/fabiolb/fabio/route"
 	"net/http"
 	"testing"
 	"time"

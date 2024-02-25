@@ -7,7 +7,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/aleksraiden/fabio/route"
+	"github.com/fabiolb/fabio/route"
 )
 
 // Proxy implements a generic TCP proxying handler.

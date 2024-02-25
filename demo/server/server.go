@@ -47,7 +47,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aleksraiden/fabio/proxy/tcp"
+	"github.com/fabiolb/fabio/proxy/tcp"
 
 	"github.com/hashicorp/consul/api"
 	"golang.org/x/net/websocket"

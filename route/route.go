@@ -3,7 +3,7 @@ package route
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/aleksraiden/fabio/transport"
+	"github.com/fabiolb/fabio/transport"
 	"log"
 	"net/url"
 	"reflect"

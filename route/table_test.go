@@ -494,7 +494,7 @@ func TestNormalizeHost(t *testing.T) {
 	}
 }
 
-// see https://github.com/aleksraiden/fabio/issues/448
+// see https://github.com/fabiolb/fabio/issues/448
 // for more information on the issue and purpose of this test
 func TestTableLookupIssue448(t *testing.T) {
 	s := `

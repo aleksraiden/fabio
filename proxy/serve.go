@@ -12,8 +12,8 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/aleksraiden/fabio/config"
-	"github.com/aleksraiden/fabio/proxy/tcp"
+	"github.com/fabiolb/fabio/config"
+	"github.com/fabiolb/fabio/proxy/tcp"
 
 	"github.com/armon/go-proxyproto"
 	"github.com/inetaf/tcpproxy"

@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/aleksraiden/fabio/config"
+	"github.com/fabiolb/fabio/config"
 	"github.com/tg123/go-htpasswd"
 )
 

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aleksraiden/fabio/config"
+	"github.com/fabiolb/fabio/config"
 )
 
 func TestAll(t *testing.T) {

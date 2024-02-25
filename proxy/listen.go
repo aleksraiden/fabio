@@ -3,7 +3,7 @@ package proxy
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/aleksraiden/fabio/config"
+	"github.com/fabiolb/fabio/config"
 	"net"
 	"time"
 

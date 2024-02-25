@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/aleksraiden/fabio/config"
+	"github.com/fabiolb/fabio/config"
 	opentracing "github.com/opentracing/opentracing-go"
 	mocktracer "github.com/opentracing/opentracing-go/mocktracer"
 	zipkin "github.com/openzipkin-contrib/zipkin-go-opentracing"

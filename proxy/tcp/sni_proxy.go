@@ -8,7 +8,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/aleksraiden/fabio/route"
+	"github.com/fabiolb/fabio/route"
 )
 
 // SNIProxy implements an SNI aware transparent TCP proxy which captures the

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/aleksraiden/fabio/registry"
+	"github.com/fabiolb/fabio/registry"
 )
 
 type ManualPathsHandler struct {

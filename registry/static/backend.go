@@ -3,8 +3,8 @@
 package static
 
 import (
-	"github.com/aleksraiden/fabio/config"
-	"github.com/aleksraiden/fabio/registry"
+	"github.com/fabiolb/fabio/config"
+	"github.com/fabiolb/fabio/registry"
 )
 
 type be struct {

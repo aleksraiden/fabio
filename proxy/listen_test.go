@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aleksraiden/fabio/config"
-	"github.com/aleksraiden/fabio/route"
+	"github.com/fabiolb/fabio/config"
+	"github.com/fabiolb/fabio/route"
 )
 
 func TestGracefulShutdown(t *testing.T) {

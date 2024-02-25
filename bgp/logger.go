@@ -5,8 +5,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/aleksraiden/fabio/exit"
-	"github.com/aleksraiden/fabio/logger"
+	"github.com/fabiolb/fabio/exit"
+	"github.com/fabiolb/fabio/logger"
 
 	bgplog "github.com/osrg/gobgp/v3/pkg/log"
 )

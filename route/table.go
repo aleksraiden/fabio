@@ -15,7 +15,7 @@ import (
 
 	"github.com/gobwas/glob"
 
-	"github.com/aleksraiden/fabio/metrics"
+	"github.com/fabiolb/fabio/metrics"
 )
 
 var errInvalidPrefix = errors.New("route: prefix must not be empty")

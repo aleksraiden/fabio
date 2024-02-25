@@ -24,7 +24,7 @@ import (
 
 	"golang.org/x/net/http2"
 
-	"github.com/aleksraiden/fabio/config"
+	"github.com/fabiolb/fabio/config"
 	consulapi "github.com/hashicorp/consul/api"
 	vaultapi "github.com/hashicorp/vault/api"
 	"github.com/pascaldekloe/goe/verify"
@@ -691,7 +691,7 @@ func writeFile(filename string, data []byte) {
 func makeCertPool(x ...[]byte) *x509.CertPool {
 	p := x509.NewCertPool()
 	for _, b := range x {
-		// https://github.com/aleksraiden/fabio/issues/434
+		// https://github.com/fabiolb/fabio/issues/434
 		if ok := p.AppendCertsFromPEM(b); !ok {
 			panic("failed to add cert from PEM. Is the CN a DNS compatible name?")
 		}

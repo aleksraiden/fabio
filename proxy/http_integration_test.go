@@ -19,11 +19,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aleksraiden/fabio/config"
-	"github.com/aleksraiden/fabio/logger"
-	"github.com/aleksraiden/fabio/noroute"
-	"github.com/aleksraiden/fabio/proxy/internal"
-	"github.com/aleksraiden/fabio/route"
+	"github.com/fabiolb/fabio/config"
+	"github.com/fabiolb/fabio/logger"
+	"github.com/fabiolb/fabio/noroute"
+	"github.com/fabiolb/fabio/proxy/internal"
+	"github.com/fabiolb/fabio/route"
 	"github.com/pascaldekloe/goe/verify"
 )
 

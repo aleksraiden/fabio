@@ -9,7 +9,7 @@ import (
 	"time"
 
 	cgm "github.com/circonus-labs/circonus-gometrics/v3"
-	"github.com/aleksraiden/fabio/config"
+	"github.com/fabiolb/fabio/config"
 	gkm "github.com/go-kit/kit/metrics"
 )
 

@@ -46,7 +46,7 @@ func (t *Target) AccessDeniedHTTP(r *http.Request) bool {
 		// headers and/or loose upstream proxies we validate all elements in the header.
 		// Specifically AWS does not strip XFF from anonymous internet sources:
 		// https://docs.aws.amazon.com/elasticloadbalancing/latest/classic/x-forwarded-headers.html#x-forwarded-for
-		// See lengthy github discussion for more background: https://github.com/aleksraiden/fabio/pull/449
+		// See lengthy github discussion for more background: https://github.com/fabiolb/fabio/pull/449
 		for _, xip := range strings.Split(xff, ",") {
 			xip = strings.TrimSpace(xip)
 			if xip == host {
@@ -71,7 +71,7 @@ func (t *Target) AccessDeniedTCP(c net.Conn) bool {
 	// Calling RemoteAddr on a proxy-protocol enabled connection may block.
 	// Therefore we explicitly check and bail out early if there are no
 	// rules defined for the target.
-	// See https://github.com/aleksraiden/fabio/issues/524 for background.
+	// See https://github.com/fabiolb/fabio/issues/524 for background.
 	if len(t.accessRules) == 0 {
 		return false
 	}

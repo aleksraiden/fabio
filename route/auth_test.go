@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/aleksraiden/fabio/auth"
+	"github.com/fabiolb/fabio/auth"
 )
 
 type testAuth struct {

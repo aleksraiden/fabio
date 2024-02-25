@@ -68,8 +68,8 @@ var tmplManual = template.Must(template.New("manual").Funcs(funcs).Parse( // lan
 			<ul id="nav-mobile" class="right hide-on-med-and-down">
 				<li><a href="/routes">Routes</a></li>
                 <li><a class="dropdown-trigger dropdown-button" href="#" data-target="overrides">Overrides<i class="material-icons right">arrow_drop_down</i></a></li>
-				<li><a href="https://github.com/aleksraiden/fabio/blob/master/CHANGELOG.md">{{.Version}}</a></li>
-				<li><a href="https://github.com/aleksraiden/fabio">Github</a></li>
+				<li><a href="https://github.com/fabiolb/fabio/blob/master/CHANGELOG.md">{{.Version}}</a></li>
+				<li><a href="https://github.com/fabiolb/fabio">Github</a></li>
 			</ul>
 		</div>
 	</div>
