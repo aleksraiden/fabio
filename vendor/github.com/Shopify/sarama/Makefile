@@ -1,39 +1,30 @@
-default: fmt get update test lint
+default: fmt vet errcheck test
 
-GO       := go
-GOBIN    := $(shell pwd)/bin
-GOBUILD  := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
-GOTEST   := $(GO) test -v -race -coverprofile=profile.out -covermode=atomic
+# Taken from https://github.com/codecov/example-go#caveat-multiple-files
+test:
+	echo "" > coverage.txt
+	for d in `go list ./... | grep -v vendor`; do \
+		go test -p 1 -v -timeout 240s -race -coverprofile=profile.out -covermode=atomic $$d || exit 1; \
+		if [ -f profile.out ]; then \
+			cat profile.out >> coverage.txt; \
+			rm profile.out; \
+		fi \
+	done
 
-FILES    := $(shell find . -name '*.go' -type f -not -name '*.pb.go' -not -name '*_generated.go' -not -name '*_test.go')
-TESTS    := $(shell find . -name '*.go' -type f -not -name '*.pb.go' -not -name '*_generated.go' -name '*_test.go')
+vet:
+	go vet ./...
 
-$(GOBIN)/tparse:
-	GOBIN=$(GOBIN) go install github.com/mfridman/tparse@v0.11.1
-get:
-	$(GO) get ./...
-	$(GO) mod verify
-	$(GO) mod tidy
-
-update:
-	$(GO) get -u -v ./...
-	$(GO) mod verify
-	$(GO) mod tidy
+# See https://github.com/kisielk/errcheck/pull/141 for details on ignorepkg
+errcheck:
+	errcheck -ignorepkg fmt github.com/Shopify/sarama/...
 
 fmt:
-	gofmt -s -l -w $(FILES) $(TESTS)
+	@if [ -n "$$(go fmt ./...)" ]; then echo 'Please run go fmt on your code.' && exit 1; fi
 
-lint:
-	GOFLAGS="-tags=functional" golangci-lint run
+install_dependencies: install_errcheck get
 
-test: $(GOBIN)/tparse
-	$(GOTEST) -timeout 2m -json ./... \
-		| tee output.json | $(GOBIN)/tparse -follow -all
-	[ -z "$${GITHUB_STEP_SUMMARY}" ] \
-		|| NO_COLOR=1 $(GOBIN)/tparse -format markdown -file output.json -all >"$${GITHUB_STEP_SUMMARY:-/dev/null}"
-.PHONY: test_functional
-test_functional: $(GOBIN)/tparse
-	$(GOTEST) -timeout 15m -tags=functional -json ./... \
-		| tee output.json | $(GOBIN)/tparse -follow -all
-	[ -z "$${GITHUB_STEP_SUMMARY:-}" ] \
-		|| NO_COLOR=1 $(GOBIN)/tparse -format markdown -file output.json -all >"$${GITHUB_STEP_SUMMARY:-/dev/null}"
+install_errcheck:
+	go get github.com/kisielk/errcheck
+
+get:
+	go get -t

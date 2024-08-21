@@ -1,10 +1,6 @@
-// Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
-
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -42,25 +38,6 @@ type Namespace struct {
 	ModifyIndex uint64 `json:"ModifyIndex,omitempty"`
 }
 
-func (n *Namespace) UnmarshalJSON(data []byte) error {
-	type Alias Namespace
-	aux := struct {
-		DeletedAtSnake *time.Time `json:"deleted_at"`
-		*Alias
-	}{
-		Alias: (*Alias)(n),
-	}
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-
-	if n.DeletedAt == nil && aux.DeletedAtSnake != nil {
-		n.DeletedAt = aux.DeletedAtSnake
-	}
-
-	return nil
-}
-
 // NamespaceACLConfig is the Namespace specific ACL configuration container
 type NamespaceACLConfig struct {
 	// PolicyDefaults is the list of policies that should be used for the parent authorizer
@@ -71,38 +48,12 @@ type NamespaceACLConfig struct {
 	RoleDefaults []ACLLink `json:"RoleDefaults" alias:"role_defaults"`
 }
 
-func (n *NamespaceACLConfig) UnmarshalJSON(data []byte) error {
-	type Alias NamespaceACLConfig
-	aux := struct {
-		PolicyDefaultsSnake []ACLLink `json:"policy_defaults"`
-		RoleDefaultsSnake   []ACLLink `json:"role_defaults"`
-		*Alias
-	}{
-		Alias: (*Alias)(n),
-	}
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-
-	if n.PolicyDefaults == nil {
-		for _, pd := range aux.PolicyDefaultsSnake {
-			n.PolicyDefaults = append(n.PolicyDefaults, pd)
-		}
-	}
-	if n.RoleDefaults == nil {
-		for _, pd := range aux.RoleDefaultsSnake {
-			n.RoleDefaults = append(n.RoleDefaults, pd)
-		}
-	}
-	return nil
-}
-
 // Namespaces can be used to manage Namespaces in Consul Enterprise..
 type Namespaces struct {
 	c *Client
 }
 
-// Namespaces returns a handle to the namespaces endpoints.
+// Operator returns a handle to the operator endpoints.
 func (c *Client) Namespaces() *Namespaces {
 	return &Namespaces{c}
 }

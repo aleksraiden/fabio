@@ -19,22 +19,16 @@ type OffsetManager interface {
 	// will otherwise leak memory. You must call this after all the
 	// PartitionOffsetManagers are closed.
 	Close() error
-
-	// Commit commits the offsets. This method can be used if AutoCommit.Enable is
-	// set to false.
-	Commit()
 }
 
 type offsetManager struct {
-	client          Client
-	conf            *Config
-	group           string
-	ticker          *time.Ticker
-	sessionCanceler func()
+	client Client
+	conf   *Config
+	group  string
+	ticker *time.Ticker
 
-	memberID        string
-	groupInstanceId *string
-	generation      int32
+	memberID   string
+	generation int32
 
 	broker     *Broker
 	brokerLock sync.RWMutex
@@ -50,10 +44,10 @@ type offsetManager struct {
 // NewOffsetManagerFromClient creates a new OffsetManager from the given client.
 // It is still necessary to call Close() on the underlying client when finished with the partition manager.
 func NewOffsetManagerFromClient(group string, client Client) (OffsetManager, error) {
-	return newOffsetManagerFromClient(group, "", GroupGenerationUndefined, client, nil)
+	return newOffsetManagerFromClient(group, "", GroupGenerationUndefined, client)
 }
 
-func newOffsetManagerFromClient(group, memberID string, generation int32, client Client, sessionCanceler func()) (*offsetManager, error) {
+func newOffsetManagerFromClient(group, memberID string, generation int32, client Client) (*offsetManager, error) {
 	// Check that we are not dealing with a closed Client before processing any other arguments
 	if client.Closed() {
 		return nil, ErrClosedClient
@@ -61,11 +55,11 @@ func newOffsetManagerFromClient(group, memberID string, generation int32, client
 
 	conf := client.Config()
 	om := &offsetManager{
-		client:          client,
-		conf:            conf,
-		group:           group,
-		poms:            make(map[string]map[int32]*partitionOffsetManager),
-		sessionCanceler: sessionCanceler,
+		client: client,
+		conf:   conf,
+		group:  group,
+		ticker: time.NewTicker(conf.Consumer.Offsets.CommitInterval),
+		poms:   make(map[string]map[int32]*partitionOffsetManager),
 
 		memberID:   memberID,
 		generation: generation,
@@ -73,13 +67,7 @@ func newOffsetManagerFromClient(group, memberID string, generation int32, client
 		closing: make(chan none),
 		closed:  make(chan none),
 	}
-	if conf.Consumer.Group.InstanceId != "" {
-		om.groupInstanceId = &conf.Consumer.Group.InstanceId
-	}
-	if conf.Consumer.Offsets.AutoCommit.Enable {
-		om.ticker = time.NewTicker(conf.Consumer.Offsets.AutoCommit.Interval)
-		go withRecover(om.mainLoop)
-	}
+	go withRecover(om.mainLoop)
 
 	return om, nil
 }
@@ -111,20 +99,16 @@ func (om *offsetManager) Close() error {
 	om.closeOnce.Do(func() {
 		// exit the mainLoop
 		close(om.closing)
-		if om.conf.Consumer.Offsets.AutoCommit.Enable {
-			<-om.closed
-		}
+		<-om.closed
 
 		// mark all POMs as closed
 		om.asyncClosePOMs()
 
 		// flush one last time
-		if om.conf.Consumer.Offsets.AutoCommit.Enable {
-			for attempt := 0; attempt <= om.conf.Consumer.Offsets.Retry.Max; attempt++ {
-				om.flushToBroker()
-				if om.releasePOMs(false) == 0 {
-					break
-				}
+		for attempt := 0; attempt <= om.conf.Consumer.Offsets.Retry.Max; attempt++ {
+			om.flushToBroker()
+			if om.releasePOMs(false) == 0 {
+				break
 			}
 		}
 
@@ -136,19 +120,11 @@ func (om *offsetManager) Close() error {
 	return nil
 }
 
-func (om *offsetManager) computeBackoff(retries int) time.Duration {
-	if om.conf.Metadata.Retry.BackoffFunc != nil {
-		return om.conf.Metadata.Retry.BackoffFunc(retries, om.conf.Metadata.Retry.Max)
-	} else {
-		return om.conf.Metadata.Retry.Backoff
-	}
-}
-
-func (om *offsetManager) fetchInitialOffset(topic string, partition int32, retries int) (int64, int32, string, error) {
+func (om *offsetManager) fetchInitialOffset(topic string, partition int32, retries int) (int64, string, error) {
 	broker, err := om.coordinator()
 	if err != nil {
 		if retries <= 0 {
-			return 0, 0, "", err
+			return 0, "", err
 		}
 		return om.fetchInitialOffset(topic, partition, retries-1)
 	}
@@ -161,7 +137,7 @@ func (om *offsetManager) fetchInitialOffset(topic string, partition int32, retri
 	resp, err := broker.FetchOffset(req)
 	if err != nil {
 		if retries <= 0 {
-			return 0, 0, "", err
+			return 0, "", err
 		}
 		om.releaseCoordinator(broker)
 		return om.fetchInitialOffset(topic, partition, retries-1)
@@ -169,31 +145,30 @@ func (om *offsetManager) fetchInitialOffset(topic string, partition int32, retri
 
 	block := resp.GetBlock(topic, partition)
 	if block == nil {
-		return 0, 0, "", ErrIncompleteResponse
+		return 0, "", ErrIncompleteResponse
 	}
 
 	switch block.Err {
 	case ErrNoError:
-		return block.Offset, block.LeaderEpoch, block.Metadata, nil
+		return block.Offset, block.Metadata, nil
 	case ErrNotCoordinatorForConsumer:
 		if retries <= 0 {
-			return 0, 0, "", block.Err
+			return 0, "", block.Err
 		}
 		om.releaseCoordinator(broker)
 		return om.fetchInitialOffset(topic, partition, retries-1)
 	case ErrOffsetsLoadInProgress:
 		if retries <= 0 {
-			return 0, 0, "", block.Err
+			return 0, "", block.Err
 		}
-		backoff := om.computeBackoff(retries)
 		select {
 		case <-om.closing:
-			return 0, 0, "", block.Err
-		case <-time.After(backoff):
+			return 0, "", block.Err
+		case <-time.After(om.conf.Metadata.Retry.Backoff):
 		}
 		return om.fetchInitialOffset(topic, partition, retries-1)
 	default:
-		return 0, 0, "", block.Err
+		return 0, "", block.Err
 	}
 }
 
@@ -241,16 +216,12 @@ func (om *offsetManager) mainLoop() {
 	for {
 		select {
 		case <-om.ticker.C:
-			om.Commit()
+			om.flushToBroker()
+			om.releasePOMs(false)
 		case <-om.closing:
 			return
 		}
 	}
-}
-
-func (om *offsetManager) Commit() {
-	om.flushToBroker()
-	om.releasePOMs(false)
 }
 
 func (om *offsetManager) flushToBroker() {
@@ -295,6 +266,7 @@ func (om *offsetManager) constructRequest() *OffsetCommitRequest {
 			ConsumerID:              om.memberID,
 			ConsumerGroupGeneration: om.generation,
 		}
+
 	}
 
 	om.pomsLock.RLock()
@@ -304,15 +276,10 @@ func (om *offsetManager) constructRequest() *OffsetCommitRequest {
 		for _, pom := range topicManagers {
 			pom.lock.Lock()
 			if pom.dirty {
-				r.AddBlock(pom.topic, pom.partition, pom.offset, pom.leaderEpoch, perPartitionTimestamp, pom.metadata)
+				r.AddBlock(pom.topic, pom.partition, pom.offset, perPartitionTimestamp, pom.metadata)
 			}
 			pom.lock.Unlock()
 		}
-	}
-
-	if om.groupInstanceId != nil {
-		r.Version = 7
-		r.GroupInstanceId = om.groupInstanceId
 	}
 
 	if len(r.blocks) > 0 {
@@ -357,10 +324,7 @@ func (om *offsetManager) handleResponse(broker *Broker, req *OffsetCommitRequest
 				pom.handleError(err)
 			case ErrOffsetsLoadInProgress:
 				// nothing wrong but we didn't commit, we'll get it next time round
-			case ErrFencedInstancedId:
-				pom.handleError(err)
-				// TODO close the whole consumer for instacne fenced....
-				om.tryCancelSession()
+				break
 			case ErrUnknownTopicOrPartition:
 				// let the user know *and* try redispatching - if topic-auto-create is
 				// enabled, redispatching should trigger a metadata req and create the
@@ -435,12 +399,6 @@ func (om *offsetManager) findPOM(topic string, partition int32) *partitionOffset
 	return nil
 }
 
-func (om *offsetManager) tryCancelSession() {
-	if om.sessionCanceler != nil {
-		om.sessionCanceler()
-	}
-}
-
 // Partition Offset Manager
 
 // PartitionOffsetManager uses Kafka to store and fetch consumed partition offsets. You MUST call Close()
@@ -497,10 +455,9 @@ type PartitionOffsetManager interface {
 }
 
 type partitionOffsetManager struct {
-	parent      *offsetManager
-	topic       string
-	partition   int32
-	leaderEpoch int32
+	parent    *offsetManager
+	topic     string
+	partition int32
 
 	lock     sync.Mutex
 	offset   int64
@@ -513,19 +470,18 @@ type partitionOffsetManager struct {
 }
 
 func (om *offsetManager) newPartitionOffsetManager(topic string, partition int32) (*partitionOffsetManager, error) {
-	offset, leaderEpoch, metadata, err := om.fetchInitialOffset(topic, partition, om.conf.Metadata.Retry.Max)
+	offset, metadata, err := om.fetchInitialOffset(topic, partition, om.conf.Metadata.Retry.Max)
 	if err != nil {
 		return nil, err
 	}
 
 	return &partitionOffsetManager{
-		parent:      om,
-		topic:       topic,
-		partition:   partition,
-		leaderEpoch: leaderEpoch,
-		errors:      make(chan *ConsumerError, om.conf.ChannelBufferSize),
-		offset:      offset,
-		metadata:    metadata,
+		parent:    om,
+		topic:     topic,
+		partition: partition,
+		errors:    make(chan *ConsumerError, om.conf.ChannelBufferSize),
+		offset:    offset,
+		metadata:  metadata,
 	}, nil
 }
 
@@ -611,6 +567,6 @@ func (pom *partitionOffsetManager) handleError(err error) {
 
 func (pom *partitionOffsetManager) release() {
 	pom.releaseOnce.Do(func() {
-		close(pom.errors)
+		go close(pom.errors)
 	})
 }

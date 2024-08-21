@@ -32,14 +32,10 @@ func (e *EndTxnResponse) decode(pd packetDecoder, version int16) (err error) {
 }
 
 func (e *EndTxnResponse) key() int16 {
-	return 26
+	return 25
 }
 
 func (e *EndTxnResponse) version() int16 {
-	return 0
-}
-
-func (r *EndTxnResponse) headerVersion() int16 {
 	return 0
 }
 

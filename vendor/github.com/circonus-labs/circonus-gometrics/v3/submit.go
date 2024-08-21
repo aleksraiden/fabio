@@ -9,7 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -21,20 +21,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-type trapResult struct {
-	Error    string        `json:"error,omitempty"`
-	Duration time.Duration `json:"_"` // doesn't come from broker
-	Filtered uint64        `json:"filtered,omitempty"`
-	Stats    uint64        `json:"stats"`
-}
-
-func (tr *trapResult) String() string {
-	ret := fmt.Sprintf("stats: %d, filtered: %d", tr.Stats, tr.Filtered)
-	if tr.Error != "" {
-		ret += ", error: " + tr.Error
-	}
-	return ret
-}
 func (m *CirconusMetrics) submit(output Metrics, newMetrics map[string]*apiclient.CheckBundleMetric) {
 
 	// if there is nowhere to send metrics to, just return.
@@ -52,7 +38,7 @@ func (m *CirconusMetrics) submit(output Metrics, newMetrics map[string]*apiclien
 		return
 	}
 
-	result, err := m.trapCall(str)
+	numStats, err := m.trapCall(str)
 	if err != nil {
 		m.Log.Printf("error sending metrics - %s\n", err)
 		return
@@ -60,61 +46,29 @@ func (m *CirconusMetrics) submit(output Metrics, newMetrics map[string]*apiclien
 
 	// OK response from circonus-agent does not
 	// indicate how many metrics were received
-	if result.Error == "agent" {
-		result.Stats = uint64(len(output))
-		result.Error = ""
+	if numStats == -1 {
+		numStats = len(output)
 	}
 
-	if m.Debug || m.DumpMetrics {
-		if m.DumpMetrics {
-			m.Log.Printf("payload: %s", string(str))
-		}
-		if m.Debug {
-			msg := "broker result --"
-			if result.Error != "" {
-				if result.Error == "agent" {
-					msg += " agent does not provide response metrics"
-				} else {
-					msg += fmt.Sprintf(" error: %s", result.Error)
-				}
-			} else {
-				msg += fmt.Sprintf(" stats: %d, filtered: %d", result.Stats, result.Filtered)
-			}
-			m.Log.Printf(msg+" duration: %s", result.Duration.String())
-		}
+	if m.Debug {
+		m.Log.Printf("%d stats sent\n", numStats)
 	}
 }
 
-func (m *CirconusMetrics) trapCall(payload []byte) (*trapResult, error) {
-	// force check refresh every five minutes
-	// to account for changes to enterprise broker
-	// clusters behind load balancers.
-	if time.Since(m.lastRefresh) > 5*time.Minute {
-		if err := m.check.RefreshTrap(); err != nil {
-			return nil, fmt.Errorf("refreshing trap: %w", err)
-		}
-		m.lastRefresh = time.Now()
-	}
-
+func (m *CirconusMetrics) trapCall(payload []byte) (int, error) {
 	trap, err := m.check.GetSubmissionURL()
 	if err != nil {
-		return nil, errors.Wrap(err, "trap call")
+		return 0, errors.Wrap(err, "trap call")
 	}
 
 	dataReader := bytes.NewReader(payload)
 
-	reqStart := time.Now()
-
 	req, err := retryablehttp.NewRequest("PUT", trap.URL.String(), dataReader)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("Accept", "application/json")
-	req.Header.Set("Connection", "close")
-	req.Header.Set("User-Agent", "cgm")
-	req.Header.Set("Content-Length", strconv.Itoa(len(payload)))
-	req.Close = true
 
 	// keep last HTTP error in the event of retry failure
 	var lastHTTPError error
@@ -132,9 +86,9 @@ func (m *CirconusMetrics) trapCall(payload []byte) (*trapResult, error) {
 		// errors and may relate to outages on the server side. This will catch
 		// invalid response codes as well, like 0 and 999.
 		if resp.StatusCode == 0 || resp.StatusCode >= 500 {
-			body, readErr := io.ReadAll(resp.Body)
+			body, readErr := ioutil.ReadAll(resp.Body)
 			if readErr != nil {
-				lastHTTPError = fmt.Errorf("- last HTTP error: %d %w", resp.StatusCode, readErr)
+				lastHTTPError = fmt.Errorf("- last HTTP error: %d %+v", resp.StatusCode, readErr)
 			} else {
 				lastHTTPError = fmt.Errorf("- last HTTP error: %d %s", resp.StatusCode, string(body))
 			}
@@ -148,28 +102,24 @@ func (m *CirconusMetrics) trapCall(payload []byte) (*trapResult, error) {
 	case trap.URL.Scheme == "https":
 		client.HTTPClient.Transport = &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:       10 * time.Second,
-				KeepAlive:     3 * time.Second,
-				FallbackDelay: -1 * time.Millisecond,
-			}).DialContext,
+			Dial: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).Dial,
 			TLSHandshakeTimeout: 10 * time.Second,
 			TLSClientConfig:     trap.TLS,
 			DisableKeepAlives:   true,
-			MaxIdleConns:        1,
 			MaxIdleConnsPerHost: -1,
 			DisableCompression:  false,
 		}
 	case trap.URL.Scheme == "http":
 		client.HTTPClient.Transport = &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:       10 * time.Second,
-				KeepAlive:     3 * time.Second,
-				FallbackDelay: -1 * time.Millisecond,
-			}).DialContext,
+			Dial: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).Dial,
 			DisableKeepAlives:   true,
-			MaxIdleConns:        1,
 			MaxIdleConnsPerHost: -1,
 			DisableCompression:  false,
 		}
@@ -177,7 +127,7 @@ func (m *CirconusMetrics) trapCall(payload []byte) (*trapResult, error) {
 		m.Log.Printf("using socket transport\n")
 		client.HTTPClient.Transport = trap.SockTransport
 	default:
-		return nil, fmt.Errorf("unknown scheme (%s), skipping submission", trap.URL.Scheme)
+		return 0, errors.Errorf("unknown scheme (%s), skipping submission", trap.URL.Scheme)
 	}
 	client.RetryWaitMin = 1 * time.Second
 	client.RetryWaitMax = 5 * time.Second
@@ -185,67 +135,57 @@ func (m *CirconusMetrics) trapCall(payload []byte) (*trapResult, error) {
 	// retryablehttp only groks log or no log
 	// but, outputs everything as [DEBUG] messages
 	if m.Debug {
-		client.Logger = m.Log
+		client.Logger = m.Log.(*log.Logger)
 	} else {
-		client.Logger = log.New(io.Discard, "", log.LstdFlags)
+		client.Logger = log.New(ioutil.Discard, "", log.LstdFlags)
 	}
 	client.CheckRetry = retryPolicy
 
-	client.ResponseLogHook = func(logger retryablehttp.Logger, r *http.Response) {
-		if r.StatusCode != http.StatusOK {
-			logger.Printf("non-200 response (%s): %s", r.Request.URL.String(), r.Status)
-		}
-	}
-
 	attempts := -1
 	client.RequestLogHook = func(logger retryablehttp.Logger, req *http.Request, retryNumber int) {
-		if retryNumber > 0 {
-			reqStart = time.Now()
-			logger.Printf("retrying (%s), retry %d", req.URL.String(), retryNumber)
-		}
 		attempts = retryNumber
 	}
 
 	resp, err := client.Do(req)
-	if resp != nil {
-		defer resp.Body.Close()
-	}
 	if err != nil {
 		if lastHTTPError != nil {
-			return nil, fmt.Errorf("submitting: %w previous: %s attempts: %d", err, lastHTTPError, attempts) //nolint:errorlint
+			return 0, fmt.Errorf("submitting: %+v %+v", err, lastHTTPError)
 		}
 		if attempts == client.RetryMax {
-			if err = m.check.RefreshTrap(); err != nil {
-				return nil, fmt.Errorf("refreshing trap: %w", err)
+			if err := m.check.RefreshTrap(); err != nil {
+				return 0, errors.Wrap(err, "refreshing trap")
 			}
-			m.lastRefresh = time.Now()
 		}
-		return nil, fmt.Errorf("trap call: %w", err)
+		return 0, errors.Wrap(err, "trap call")
 	}
 
-	dur := time.Since(reqStart)
+	defer resp.Body.Close()
 
 	// no content - expected result from
 	// circonus-agent when metrics accepted
 	if resp.StatusCode == http.StatusNoContent {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return &trapResult{Stats: 0, Filtered: 0, Error: "agent", Duration: dur}, nil
+		return -1, nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("error reading body: %w", err)
+		m.Log.Printf("error reading body, proceeding - %s\n", err)
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(body, &response); err != nil {
+		m.Log.Printf("error parsing body, proceeding - %s (%s)\n", err, body)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("bad response code: %d (%s)", resp.StatusCode, string(body))
+		return 0, errors.New("bad response code: " + strconv.Itoa(resp.StatusCode))
 	}
-
-	var result trapResult
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error parsing body: %w (%s)", err, body)
+	switch v := response["stats"].(type) {
+	case float64:
+		return int(v), nil
+	case int:
+		return v, nil
+	default:
 	}
-
-	result.Duration = dur
-	return &result, nil
+	return 0, errors.New("error, bad response data type (not numeric)")
 }

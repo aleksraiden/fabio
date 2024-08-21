@@ -21,8 +21,8 @@ import (
 
 // AccountLimit defines a usage limit imposed on account
 type AccountLimit struct {
-	Type  string `json:"_type,omitempty"`  // string
 	Limit uint   `json:"_limit,omitempty"` // uint >=0
+	Type  string `json:"_type,omitempty"`  // string
 	Used  uint   `json:"_used,omitempty"`  // uint >=0
 }
 
@@ -40,27 +40,22 @@ type AccountUser struct {
 
 // Account defines an account. See https://login.circonus.com/resources/api/calls/account for more information.
 type Account struct {
-	CID                  string          `json:"_cid,omitempty"` // string
-	AccountUUID          string          `json:"_account_uuid,omitempty"`
-	Country              string          `json:"country_code,omitempty"`           // string
-	Name                 string          `json:"name,omitempty"`                   // string
-	OwnerCID             string          `json:"_owner,omitempty"`                 // string
-	Timezone             string          `json:"timezone,omitempty"`               // string
-	UIBaseURL            string          `json:"_ui_base_url,omitempty"`           // string
-	PrivateC3DataURL     string          `json:"_c3_data_url,omitempty"`           // string
-	C3DataURL            string          `json:"c3_data_url,omitempty"`            // string
-	Address1             *string         `json:"address1,omitempty"`               // string or null
-	Address2             *string         `json:"address2,omitempty"`               // string or null
-	CCEmail              *string         `json:"cc_email,omitempty"`               // string or null
-	City                 *string         `json:"city,omitempty"`                   // string or null
-	DefaultDashboardUUID *string         `json:"default_dashboard_uuid,omitempty"` // string or null
-	DefaultDashboardType *string         `json:"default_dashboard_type,omitempty"` // string or null
-	Description          *string         `json:"description,omitempty"`            // string or null
-	StateProv            *string         `json:"state_prov,omitempty"`             // string or null
-	ContactGroups        []string        `json:"_contact_groups,omitempty"`        // [] len >= 0
-	Invites              []AccountInvite `json:"invites,omitempty"`                // [] len >= 0
-	Usage                []AccountLimit  `json:"_usage,omitempty"`                 // [] len >= 0
-	Users                []AccountUser   `json:"users,omitempty"`                  // [] len >= 0
+	Address1      *string         `json:"address1,omitempty"`        // string or null
+	Address2      *string         `json:"address2,omitempty"`        // string or null
+	CCEmail       *string         `json:"cc_email,omitempty"`        // string or null
+	CID           string          `json:"_cid,omitempty"`            // string
+	City          *string         `json:"city,omitempty"`            // string or null
+	ContactGroups []string        `json:"_contact_groups,omitempty"` // [] len >= 0
+	Country       string          `json:"country_code,omitempty"`    // string
+	Description   *string         `json:"description,omitempty"`     // string or null
+	Invites       []AccountInvite `json:"invites,omitempty"`         // [] len >= 0
+	Name          string          `json:"name,omitempty"`            // string
+	OwnerCID      string          `json:"_owner,omitempty"`          // string
+	StateProv     *string         `json:"state_prov,omitempty"`      // string or null
+	Timezone      string          `json:"timezone,omitempty"`        // string
+	UIBaseURL     string          `json:"_ui_base_url,omitempty"`    // string
+	Usage         []AccountLimit  `json:"_usage,omitempty"`          // [] len >= 0
+	Users         []AccountUser   `json:"users,omitempty"`           // [] len >= 0
 }
 
 // FetchAccount retrieves account with passed cid. Pass nil for '/account/current'.

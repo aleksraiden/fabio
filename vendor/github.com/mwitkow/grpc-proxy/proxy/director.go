@@ -4,7 +4,7 @@
 package proxy
 
 import (
-	"context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 

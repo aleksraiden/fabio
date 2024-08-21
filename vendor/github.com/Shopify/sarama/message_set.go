@@ -1,7 +1,5 @@
 package sarama
 
-import "errors"
-
 type MessageBlock struct {
 	Offset int64
 	Msg    *Message
@@ -31,10 +29,7 @@ func (msb *MessageBlock) decode(pd packetDecoder) (err error) {
 		return err
 	}
 
-	lengthDecoder := acquireLengthField()
-	defer releaseLengthField(lengthDecoder)
-
-	if err = pd.push(lengthDecoder); err != nil {
+	if err = pd.push(&lengthField{}); err != nil {
 		return err
 	}
 
@@ -72,7 +67,7 @@ func (ms *MessageSet) decode(pd packetDecoder) (err error) {
 	for pd.remaining() > 0 {
 		magic, err := magicValue(pd)
 		if err != nil {
-			if errors.Is(err, ErrInsufficientData) {
+			if err == ErrInsufficientData {
 				ms.PartialTrailingMessage = true
 				return nil
 			}
@@ -85,9 +80,10 @@ func (ms *MessageSet) decode(pd packetDecoder) (err error) {
 
 		msb := new(MessageBlock)
 		err = msb.decode(pd)
-		if err == nil {
+		switch err {
+		case nil:
 			ms.Messages = append(ms.Messages, msb)
-		} else if errors.Is(err, ErrInsufficientData) {
+		case ErrInsufficientData:
 			// As an optimization the server is allowed to return a partial message at the
 			// end of the message set. Clients should handle this case. So we just ignore such things.
 			if msb.Offset == -1 {
@@ -97,7 +93,7 @@ func (ms *MessageSet) decode(pd packetDecoder) (err error) {
 				ms.PartialTrailingMessage = true
 			}
 			return nil
-		} else {
+		default:
 			return err
 		}
 	}

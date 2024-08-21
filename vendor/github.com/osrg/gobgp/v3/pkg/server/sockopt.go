@@ -12,8 +12,8 @@
 // implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//go:build !linux && !openbsd && !windows
-// +build !linux,!openbsd,!windows
+//go:build !linux && !openbsd
+// +build !linux,!openbsd
 
 package server
 
@@ -41,11 +41,7 @@ func setBindToDevSockopt(sc syscall.RawConn, device string) error {
 	return fmt.Errorf("binding connection to a device is not supported")
 }
 
-func setTCPMSSSockopt(conn *net.TCPConn, mss uint16) error {
-	return setTcpMSSSockopt(conn, mss)
-}
-
-func dialerControl(logger log.Logger, network, address string, c syscall.RawConn, ttl, minTtl uint8, mss uint16, password string, bindInterface string) error {
+func dialerControl(logger log.Logger, network, address string, c syscall.RawConn, ttl, minTtl uint8, password string, bindInterface string) error {
 	if password != "" {
 		logger.Warn("setting md5 for active connection is not supported",
 			log.Fields{
@@ -60,12 +56,6 @@ func dialerControl(logger log.Logger, network, address string, c syscall.RawConn
 	}
 	if minTtl != 0 {
 		logger.Warn("setting min ttl for active connection is not supported",
-			log.Fields{
-				"Topic": "Peer",
-				"Key":   address})
-	}
-	if mss != 0 {
-		logger.Warn("setting MSS for active connection is not supported",
 			log.Fields{
 				"Topic": "Peer",
 				"Key":   address})

@@ -5,10 +5,8 @@
 // by the programmer to support others. (See the sha.go source file as a guide.)
 //
 // You will want to use something like...
-//
-//	myauth := htpasswd.New("./my-htpasswd-file", htpasswd.DefaultSystems, nil)
-//	ok := myauth.Match(user, password)
-//
+//      myauth := htpasswd.New("./my-htpasswd-file", htpasswd.DefaultSystems, nil)
+//      ok := myauth.Match(user, password)
 // ...to use in your handler code.
 // You should read about that nil, as well as Reread() too.
 package htpasswd
@@ -53,13 +51,13 @@ type BadLineHandler func(err error)
 // An File encompasses an Apache-style htpasswd file for HTTP Basic authentication
 type File struct {
 	filePath string
-	mutex    sync.RWMutex
+	mutex    sync.Mutex
 	passwds  passwdTable
 	parsers  []PasswdParser
 }
 
 // DefaultSystems is an array of PasswdParser including all builtin parsers. Notice that Plain is last, since it accepts anything
-var DefaultSystems = []PasswdParser{AcceptMd5, AcceptSha, AcceptBcrypt, AcceptSsha, AcceptCryptSha, AcceptPlain}
+var DefaultSystems = []PasswdParser{AcceptMd5, AcceptSha, AcceptBcrypt, AcceptSsha, AcceptPlain}
 
 // New creates an File from an Apache-style htpasswd file for HTTP Basic Authentication.
 //
@@ -104,9 +102,9 @@ func NewFromReader(r io.Reader, parsers []PasswdParser, bad BadLineHandler) (*Fi
 // Match checks the username and password combination to see if it represents
 // a valid account from the htpassword file.
 func (bf *File) Match(username, password string) bool {
-	bf.mutex.RLock()
+	bf.mutex.Lock()
 	matcher, ok := bf.passwds[username]
-	bf.mutex.RUnlock()
+	bf.mutex.Unlock()
 
 	if ok && matcher.MatchesPassword(password) {
 		// we are good

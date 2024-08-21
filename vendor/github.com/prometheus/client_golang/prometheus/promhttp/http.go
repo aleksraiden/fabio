@@ -33,11 +33,9 @@ package promhttp
 
 import (
 	"compress/gzip"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,10 +46,9 @@ import (
 )
 
 const (
-	contentTypeHeader      = "Content-Type"
-	contentEncodingHeader  = "Content-Encoding"
-	acceptEncodingHeader   = "Accept-Encoding"
-	processStartTimeHeader = "Process-Start-Time-Unix"
+	contentTypeHeader     = "Content-Type"
+	contentEncodingHeader = "Content-Encoding"
+	acceptEncodingHeader  = "Accept-Encoding"
 )
 
 var gzipPool = sync.Pool{
@@ -87,13 +84,6 @@ func Handler() http.Handler {
 // instrumentation. Use the InstrumentMetricHandler function to apply the same
 // kind of instrumentation as it is used by the Handler function.
 func HandlerFor(reg prometheus.Gatherer, opts HandlerOpts) http.Handler {
-	return HandlerForTransactional(prometheus.ToTransactionalGatherer(reg), opts)
-}
-
-// HandlerForTransactional is like HandlerFor, but it uses transactional gather, which
-// can safely change in-place returned *dto.MetricFamily before call to `Gather` and after
-// call to `done` of that `Gather`.
-func HandlerForTransactional(reg prometheus.TransactionalGatherer, opts HandlerOpts) http.Handler {
 	var (
 		inFlightSem chan struct{}
 		errCnt      = prometheus.NewCounterVec(
@@ -109,12 +99,11 @@ func HandlerForTransactional(reg prometheus.TransactionalGatherer, opts HandlerO
 		inFlightSem = make(chan struct{}, opts.MaxRequestsInFlight)
 	}
 	if opts.Registry != nil {
-		// Initialize all possibilities that can occur below.
+		// Initialize all possibilites that can occur below.
 		errCnt.WithLabelValues("gathering")
 		errCnt.WithLabelValues("encoding")
 		if err := opts.Registry.Register(errCnt); err != nil {
-			are := &prometheus.AlreadyRegisteredError{}
-			if errors.As(err, are) {
+			if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
 				errCnt = are.ExistingCollector.(*prometheus.CounterVec)
 			} else {
 				panic(err)
@@ -123,9 +112,6 @@ func HandlerForTransactional(reg prometheus.TransactionalGatherer, opts HandlerO
 	}
 
 	h := http.HandlerFunc(func(rsp http.ResponseWriter, req *http.Request) {
-		if !opts.ProcessStartTime.IsZero() {
-			rsp.Header().Set(processStartTimeHeader, strconv.FormatInt(opts.ProcessStartTime.Unix(), 10))
-		}
 		if inFlightSem != nil {
 			select {
 			case inFlightSem <- struct{}{}: // All good, carry on.
@@ -137,8 +123,7 @@ func HandlerForTransactional(reg prometheus.TransactionalGatherer, opts HandlerO
 				return
 			}
 		}
-		mfs, done, err := reg.Gather()
-		defer done()
+		mfs, err := reg.Gather()
 		if err != nil {
 			if opts.ErrorLog != nil {
 				opts.ErrorLog.Println("error gathering metrics:", err)
@@ -182,12 +167,15 @@ func HandlerForTransactional(reg prometheus.TransactionalGatherer, opts HandlerO
 
 		enc := expfmt.NewEncoder(w, contentType)
 
+		var lastErr error
+
 		// handleError handles the error according to opts.ErrorHandling
 		// and returns true if we have to abort after the handling.
 		handleError := func(err error) bool {
 			if err == nil {
 				return false
 			}
+			lastErr = err
 			if opts.ErrorLog != nil {
 				opts.ErrorLog.Println("error encoding and sending metric family:", err)
 			}
@@ -196,10 +184,7 @@ func HandlerForTransactional(reg prometheus.TransactionalGatherer, opts HandlerO
 			case PanicOnError:
 				panic(err)
 			case HTTPErrorOnError:
-				// We cannot really send an HTTP error at this
-				// point because we most likely have written
-				// something to rsp already. But at least we can
-				// stop sending.
+				httpError(rsp, err)
 				return true
 			}
 			// Do nothing in all other cases, including ContinueOnError.
@@ -216,6 +201,10 @@ func HandlerForTransactional(reg prometheus.TransactionalGatherer, opts HandlerO
 			if handleError(closer.Close()) {
 				return
 			}
+		}
+
+		if lastErr != nil {
+			httpError(rsp, lastErr)
 		}
 	})
 
@@ -257,8 +246,7 @@ func InstrumentMetricHandler(reg prometheus.Registerer, handler http.Handler) ht
 	cnt.WithLabelValues("500")
 	cnt.WithLabelValues("503")
 	if err := reg.Register(cnt); err != nil {
-		are := &prometheus.AlreadyRegisteredError{}
-		if errors.As(err, are) {
+		if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
 			cnt = are.ExistingCollector.(*prometheus.CounterVec)
 		} else {
 			panic(err)
@@ -270,8 +258,7 @@ func InstrumentMetricHandler(reg prometheus.Registerer, handler http.Handler) ht
 		Help: "Current number of scrapes being served.",
 	})
 	if err := reg.Register(gge); err != nil {
-		are := &prometheus.AlreadyRegisteredError{}
-		if errors.As(err, are) {
+		if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
 			gge = are.ExistingCollector.(prometheus.Gauge)
 		} else {
 			panic(err)
@@ -289,12 +276,7 @@ type HandlerErrorHandling int
 // errors are encountered.
 const (
 	// Serve an HTTP status code 500 upon the first error
-	// encountered. Report the error message in the body. Note that HTTP
-	// errors cannot be served anymore once the beginning of a regular
-	// payload has been sent. Thus, in the (unlikely) case that encoding the
-	// payload into the negotiated wire format fails, serving the response
-	// will simply be aborted. Set an ErrorLog in HandlerOpts to detect
-	// those errors.
+	// encountered. Report the error message in the body.
 	HTTPErrorOnError HandlerErrorHandling = iota
 	// Ignore errors and try to serve as many metrics as possible.  However,
 	// if no metrics can be served, serve an HTTP status code 500 and the
@@ -320,12 +302,8 @@ type Logger interface {
 // HandlerOpts specifies options how to serve metrics via an http.Handler. The
 // zero value of HandlerOpts is a reasonable default.
 type HandlerOpts struct {
-	// ErrorLog specifies an optional Logger for errors collecting and
-	// serving metrics. If nil, errors are not logged at all. Note that the
-	// type of a reported error is often prometheus.MultiError, which
-	// formats into a multi-line error string. If you want to avoid the
-	// latter, create a Logger implementation that detects a
-	// prometheus.MultiError and formats the contained errors into one line.
+	// ErrorLog specifies an optional logger for errors collecting and
+	// serving metrics. If nil, errors are not logged at all.
 	ErrorLog Logger
 	// ErrorHandling defines how errors are handled. Note that errors are
 	// logged regardless of the configured ErrorHandling provided ErrorLog
@@ -371,14 +349,6 @@ type HandlerOpts struct {
 	// (which changes the identity of the resulting series on the Prometheus
 	// server).
 	EnableOpenMetrics bool
-	// ProcessStartTime allows setting process start timevalue that will be exposed
-	// with "Process-Start-Time-Unix" response header along with the metrics
-	// payload. This allow callers to have efficient transformations to cumulative
-	// counters (e.g. OpenTelemetry) or generally _created timestamp estimation per
-	// scrape target.
-	// NOTE: This feature is experimental and not covered by OpenMetrics or Prometheus
-	// exposition format.
-	ProcessStartTime time.Time
 }
 
 // gzipAccepted returns whether the client will accept gzip-encoded content.
@@ -395,9 +365,11 @@ func gzipAccepted(header http.Header) bool {
 }
 
 // httpError removes any content-encoding header and then calls http.Error with
-// the provided error and http.StatusInternalServerError. Error contents is
-// supposed to be uncompressed plain text. Same as with a plain http.Error, this
-// must not be called if the header or any payload has already been sent.
+// the provided error and http.StatusInternalServerErrer. Error contents is
+// supposed to be uncompressed plain text. However, same as with a plain
+// http.Error, any header settings will be void if the header has already been
+// sent. The error message will still be written to the writer, but it will
+// probably be of limited use.
 func httpError(rsp http.ResponseWriter, err error) {
 	rsp.Header().Del(contentEncodingHeader)
 	http.Error(

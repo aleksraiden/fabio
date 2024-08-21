@@ -25,13 +25,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	"google.golang.org/grpc/internal"
 )
-
-func init() {
-	internal.FromOutgoingContextRaw = fromOutgoingContextRaw
-}
 
 // DecodeKeyValue returns k, v, nil.
 //
@@ -47,11 +41,10 @@ type MD map[string][]string
 // New creates an MD from a given key-value map.
 //
 // Only the following ASCII characters are allowed in keys:
-//   - digits: 0-9
-//   - uppercase letters: A-Z (normalized to lower)
-//   - lowercase letters: a-z
-//   - special characters: -_.
-//
+//  - digits: 0-9
+//  - uppercase letters: A-Z (normalized to lower)
+//  - lowercase letters: a-z
+//  - special characters: -_.
 // Uppercase letters are automatically converted to lowercase.
 //
 // Keys beginning with "grpc-" are reserved for grpc-internal use only and may
@@ -69,11 +62,10 @@ func New(m map[string]string) MD {
 // Pairs panics if len(kv) is odd.
 //
 // Only the following ASCII characters are allowed in keys:
-//   - digits: 0-9
-//   - uppercase letters: A-Z (normalized to lower)
-//   - lowercase letters: a-z
-//   - special characters: -_.
-//
+//  - digits: 0-9
+//  - uppercase letters: A-Z (normalized to lower)
+//  - lowercase letters: a-z
+//  - special characters: -_.
 // Uppercase letters are automatically converted to lowercase.
 //
 // Keys beginning with "grpc-" are reserved for grpc-internal use only and may
@@ -97,11 +89,7 @@ func (md MD) Len() int {
 
 // Copy returns a copy of md.
 func (md MD) Copy() MD {
-	out := make(MD, len(md))
-	for k, v := range md {
-		out[k] = copyOf(v)
-	}
-	return out
+	return Join(md)
 }
 
 // Get obtains the values for a given key.
@@ -159,16 +147,14 @@ func Join(mds ...MD) MD {
 type mdIncomingKey struct{}
 type mdOutgoingKey struct{}
 
-// NewIncomingContext creates a new context with incoming md attached. md must
-// not be modified after calling this function.
+// NewIncomingContext creates a new context with incoming md attached.
 func NewIncomingContext(ctx context.Context, md MD) context.Context {
 	return context.WithValue(ctx, mdIncomingKey{}, md)
 }
 
 // NewOutgoingContext creates a new context with outgoing md attached. If used
 // in conjunction with AppendToOutgoingContext, NewOutgoingContext will
-// overwrite any previously-appended metadata. md must not be modified after
-// calling this function.
+// overwrite any previously-appended metadata.
 func NewOutgoingContext(ctx context.Context, md MD) context.Context {
 	return context.WithValue(ctx, mdOutgoingKey{}, rawMD{md: md})
 }
@@ -183,11 +169,8 @@ func AppendToOutgoingContext(ctx context.Context, kv ...string) context.Context 
 	md, _ := ctx.Value(mdOutgoingKey{}).(rawMD)
 	added := make([][]string, len(md.added)+1)
 	copy(added, md.added)
-	kvCopy := make([]string, 0, len(kv))
-	for i := 0; i < len(kv); i += 2 {
-		kvCopy = append(kvCopy, strings.ToLower(kv[i]), kv[i+1])
-	}
-	added[len(added)-1] = kvCopy
+	added[len(added)-1] = make([]string, len(kv))
+	copy(added[len(added)-1], kv)
 	return context.WithValue(ctx, mdOutgoingKey{}, rawMD{md: md.md, added: added})
 }
 
@@ -211,10 +194,9 @@ func FromIncomingContext(ctx context.Context) (MD, bool) {
 }
 
 // ValueFromIncomingContext returns the metadata value corresponding to the metadata
-// key from the incoming metadata if it exists. Keys are matched in a case insensitive
-// manner.
+// key from the incoming metadata if it exists. Key must be lower-case.
 //
-// # Experimental
+// Experimental
 //
 // Notice: This API is EXPERIMENTAL and may be changed or removed in a
 // later release.
@@ -228,29 +210,33 @@ func ValueFromIncomingContext(ctx context.Context, key string) []string {
 		return copyOf(v)
 	}
 	for k, v := range md {
-		// Case insenitive comparison: MD is a map, and there's no guarantee
-		// that the MD attached to the context is created using our helper
-		// functions.
-		if strings.EqualFold(k, key) {
+		// We need to manually convert all keys to lower case, because MD is a
+		// map, and there's no guarantee that the MD attached to the context is
+		// created using our helper functions.
+		if strings.ToLower(k) == key {
 			return copyOf(v)
 		}
 	}
 	return nil
 }
 
+// the returned slice must not be modified in place
 func copyOf(v []string) []string {
 	vals := make([]string, len(v))
 	copy(vals, v)
 	return vals
 }
 
-// fromOutgoingContextRaw returns the un-merged, intermediary contents of rawMD.
+// FromOutgoingContextRaw returns the un-merged, intermediary contents of rawMD.
 //
 // Remember to perform strings.ToLower on the keys, for both the returned MD (MD
 // is a map, there's no guarantee it's created using our helper functions) and
 // the extra kv pairs (AppendToOutgoingContext doesn't turn them into
 // lowercase).
-func fromOutgoingContextRaw(ctx context.Context) (MD, [][]string, bool) {
+//
+// This is intended for gRPC-internal use ONLY. Users should use
+// FromOutgoingContext instead.
+func FromOutgoingContextRaw(ctx context.Context) (MD, [][]string, bool) {
 	raw, ok := ctx.Value(mdOutgoingKey{}).(rawMD)
 	if !ok {
 		return nil, nil, false

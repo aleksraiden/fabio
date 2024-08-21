@@ -128,8 +128,6 @@ message WatchEventRequest {
       enum Type { BEST = 0; ADJIN = 1; POST_POLICY = 2; }
       Type type = 1;
       bool init = 2;
-      string peer_address = 3;
-      string peer_group = 4;
     }
     repeated Filter filters = 1;
   }
@@ -249,7 +247,6 @@ message TableLookupPrefix {
   enum Type { EXACT = 0; LONGER = 1; SHORTER = 2; }
   string prefix = 1;
   Type type = 2;
-  string rd = 3;
 }
 
 message ListPathRequest {
@@ -262,11 +259,6 @@ message ListPathRequest {
   bool enable_filtered = 6;
   bool enable_nlri_binary = 7;
   bool enable_attribute_binary = 8;
-  // enable_only_binary == true means that only nlri_binary and pattrs_binary
-  // will be used instead of nlri and pattrs for each Path in ListPathResponse.
-  bool enable_only_binary = 9;
-  // max ammount of paths to be allocated, unlimited by default
-  uint64 batch_size = 10;
 }
 
 message ListPathResponse { Destination destination = 1; }
@@ -322,10 +314,7 @@ message SetPoliciesRequest {
   repeated PolicyAssignment assignments = 3;
 }
 
-message AddDefinedSetRequest {
-  DefinedSet defined_set = 1;
-  bool replace = 2;
-}
+message AddDefinedSetRequest { DefinedSet defined_set = 1; }
 
 message DeleteDefinedSetRequest {
   DefinedSet defined_set = 1;
@@ -504,7 +493,6 @@ message Path {
   // - IPAddressPrefix
   // - LabeledIPAddressPrefix
   // - EncapsulationNLRI
-  // - VPLSNLRI
   // - EVPNEthernetAutoDiscoveryRoute
   // - EVPNMACIPAdvertisementRoute
   // - EVPNInclusiveMulticastEthernetTagRoute
@@ -616,7 +604,6 @@ message PeerConf {
   uint32 allow_own_asn = 13;
   bool replace_peer_asn = 14;
   bool admin_down = 15;
-  bool send_software_version = 16;
 }
 
 message PeerGroupConf {

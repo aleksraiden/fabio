@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build go1.17
-// +build go1.17
+// +build go1.13
 
 package apiclient
 
@@ -14,7 +13,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"log"
 	"math"
 	"math/big"
@@ -31,15 +30,13 @@ import (
 	"github.com/pkg/errors"
 )
 
-var rnd *rand.Rand
-
 func init() {
 	n, err := crand.Int(crand.Reader, big.NewInt(math.MaxInt64))
 	if err != nil {
-		rnd = rand.New(rand.NewSource(time.Now().UTC().UnixNano())) //nolint:gosec //G404
+		rand.Seed(time.Now().UTC().UnixNano())
 		return
 	}
-	rand.New(rand.NewSource(n.Int64())) //nolint:gosec //G404
+	rand.Seed(n.Int64())
 }
 
 const (
@@ -86,39 +83,38 @@ type TagType []string
 
 // Config options for Circonus API
 type Config struct {
-	Log Logger
-	// TLSConfig defines a custom tls configuration to use when communicating with the API
-	TLSConfig *tls.Config
-	// CACert deprecating, use TLSConfig instead
-	CACert *x509.CertPool
 	// URL defines the API URL - default https://api.circonus.com/v2/
 	URL string
+
 	// TokenKey defines the key to use when communicating with the API
 	TokenKey string
+
 	// TokenApp defines the app to use when communicating with the API
-	TokenApp       string
+	TokenApp string
+
 	TokenAccountID string
-	MinRetryDelay  string
-	MaxRetryDelay  string
-	MaxRetries     uint
-	DisableRetries bool
-	Debug          bool
+
+	// CACert deprecating, use TLSConfig instead
+	CACert *x509.CertPool
+
+	// TLSConfig defines a custom tls configuration to use when communicating with the API
+	TLSConfig *tls.Config
+
+	Log   Logger
+	Debug bool
 }
 
 // API Circonus API
 type API struct {
-	Log                     Logger
-	caCert                  *x509.CertPool
-	tlsConfig               *tls.Config
 	apiURL                  *url.URL
 	key                     TokenKeyType
 	app                     TokenAppType
 	accountID               TokenAccountIDType
-	minRetryDelay           time.Duration
-	maxRetryDelay           time.Duration
-	maxRetries              uint
-	useExponentialBackoff   bool
+	caCert                  *x509.CertPool
+	tlsConfig               *tls.Config
 	Debug                   bool
+	Log                     Logger
+	useExponentialBackoff   bool
 	useExponentialBackoffmu sync.Mutex
 }
 
@@ -186,34 +182,7 @@ func New(ac *Config) (*API, error) {
 		a.Log = log.New(os.Stdout, "", log.LstdFlags)
 	}
 	if a.Log == nil {
-		a.Log = log.New(io.Discard, "", log.LstdFlags)
-	}
-
-	a.maxRetries = maxRetries
-	if ac.MaxRetries > 0 {
-		a.maxRetries = ac.MaxRetries
-	}
-
-	if ac.DisableRetries {
-		a.maxRetries = 0
-	}
-
-	a.minRetryDelay = minRetryWait
-	if ac.MinRetryDelay != "" {
-		mr, err := time.ParseDuration(ac.MinRetryDelay)
-		if err != nil {
-			a.Log.Printf("[ERR] min retry delay (%s): %s", ac.MinRetryDelay, err)
-		}
-		a.minRetryDelay = mr
-	}
-
-	a.maxRetryDelay = maxRetryWait
-	if ac.MaxRetryDelay != "" {
-		mr, err := time.ParseDuration(ac.MaxRetryDelay)
-		if err != nil {
-			a.Log.Printf("[ERR] max retry delay (%s): %s", ac.MaxRetryDelay, err)
-		}
-		a.maxRetryDelay = mr
+		a.Log = log.New(ioutil.Discard, "", log.LstdFlags)
 	}
 
 	return a, nil
@@ -257,7 +226,7 @@ func (a *API) Put(reqPath string, data []byte) ([]byte, error) {
 }
 
 func backoff(interval uint) float64 {
-	return math.Floor(((float64(interval) * (1 + rnd.Float64())) / 2) + .5) //nolint:gosec
+	return math.Floor(((float64(interval) * (1 + rand.Float64())) / 2) + .5)
 }
 
 // apiRequest manages retry strategy for exponential backoffs
@@ -342,7 +311,7 @@ func (a *API) apiCall(reqMethod string, reqPath string, data []byte) ([]byte, er
 		if resp.StatusCode == 0 || // wtf?!
 			resp.StatusCode >= 500 || // rutroh
 			resp.StatusCode == 429 { // rate limit
-			body, readErr := io.ReadAll(resp.Body)
+			body, readErr := ioutil.ReadAll(resp.Body)
 			if readErr != nil {
 				lastHTTPError = errors.Errorf("- response: %d %s", resp.StatusCode, readErr.Error())
 			} else {
@@ -353,9 +322,7 @@ func (a *API) apiCall(reqMethod string, reqPath string, data []byte) ([]byte, er
 		return false, nil
 	}
 
-	if len(data) > 0 {
-		a.Log.Printf("[DEBUG] sending json (%s)\n", string(data))
-	}
+	a.Log.Printf("[DEBUG] sending json (%s)\n", string(data))
 
 	dataReader := bytes.NewReader(data)
 
@@ -369,7 +336,6 @@ func (a *API) apiCall(reqMethod string, reqPath string, data []byte) ([]byte, er
 	if string(a.accountID) != "" {
 		req.Header.Add("X-Circonus-Account-ID", string(a.accountID))
 	}
-	req.Header.Add("Cache-Control", "no-store")
 
 	client := retryablehttp.NewClient()
 	if a.apiURL.Scheme == "https" {
@@ -377,10 +343,7 @@ func (a *API) apiCall(reqMethod string, reqPath string, data []byte) ([]byte, er
 		if a.tlsConfig != nil { // preference full custom tls config
 			tlscfg = a.tlsConfig
 		} else if a.caCert != nil {
-			tlscfg = &tls.Config{
-				RootCAs:    a.caCert,
-				MinVersion: tls.VersionTLS12,
-			}
+			tlscfg = &tls.Config{RootCAs: a.caCert}
 		}
 		client.HTTPClient.Transport = &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
@@ -414,20 +377,20 @@ func (a *API) apiCall(reqMethod string, reqPath string, data []byte) ([]byte, er
 
 	if eb {
 		// limit to one request if using exponential backoff
-		client.RetryWaitMin = 1 * time.Second
-		client.RetryWaitMax = 60 * time.Second
+		client.RetryWaitMin = 1
+		client.RetryWaitMax = 2
 		client.RetryMax = 0
 	} else {
-		client.RetryWaitMin = a.minRetryDelay
-		client.RetryWaitMax = a.maxRetryDelay
-		client.RetryMax = int(a.maxRetries)
+		client.RetryWaitMin = minRetryWait
+		client.RetryWaitMax = maxRetryWait
+		client.RetryMax = maxRetries
 	}
 
 	// retryablehttp only groks log or no log
 	if a.Debug {
 		client.Logger = a.Log
 	} else {
-		client.Logger = log.New(io.Discard, "", log.LstdFlags)
+		client.Logger = log.New(ioutil.Discard, "", log.LstdFlags)
 	}
 
 	client.CheckRetry = retryPolicy
@@ -441,7 +404,7 @@ func (a *API) apiCall(reqMethod string, reqPath string, data []byte) ([]byte, er
 	}
 
 	defer resp.Body.Close() // nolint: errcheck
-	body, err := io.ReadAll(resp.Body)
+	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, errors.Wrap(err, "reading Circonus API response")
 	}

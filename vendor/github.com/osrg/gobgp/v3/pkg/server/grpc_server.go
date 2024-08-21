@@ -17,10 +17,8 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"reflect"
 	"regexp"
@@ -30,21 +28,19 @@ import (
 	"time"
 
 	"github.com/dgryski/go-farm"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	apb "google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
 	tspb "google.golang.org/protobuf/types/known/timestamppb"
 
 	api "github.com/osrg/gobgp/v3/api"
+	"github.com/osrg/gobgp/v3/internal/pkg/config"
 	"github.com/osrg/gobgp/v3/internal/pkg/table"
 	"github.com/osrg/gobgp/v3/pkg/apiutil"
-	"github.com/osrg/gobgp/v3/pkg/config/oc"
 	"github.com/osrg/gobgp/v3/pkg/log"
 	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
 )
-
-// Unlimited batch size by default
-const defaultListPathBatchSize = math.MaxUint64
 
 type server struct {
 	bgpServer  *BgpServer
@@ -93,13 +89,11 @@ func (s *server) serve() error {
 	serve := func(lis net.Listener) {
 		defer wg.Done()
 		err := s.grpcServer.Serve(lis)
-		if err != nil {
-			s.bgpServer.logger.Warn("accept failed",
-				log.Fields{
-					"Topic": "grpc",
-					"Key":   lis.Addr().String(),
-					"Error": err})
-		}
+		s.bgpServer.logger.Warn("accept failed",
+			log.Fields{
+				"Topic": "grpc",
+				"Key":   lis,
+				"Error": err})
 	}
 
 	for _, lis := range l {
@@ -192,22 +186,16 @@ func toPathAPI(binNlri []byte, binPattrs [][]byte, anyNlri *apb.Any, anyPattrs [
 	return p
 }
 
-func toPathApi(path *table.Path, v *table.Validation, onlyBinary, nlriBinary, attributeBinary bool) *api.Path {
-	var (
-		anyNlri   *apb.Any
-		anyPattrs []*apb.Any
-	)
+func toPathApi(path *table.Path, v *table.Validation, nlri_binary, attribute_binary bool) *api.Path {
 	nlri := path.GetNlri()
-	if !onlyBinary {
-		anyNlri, _ = apiutil.MarshalNLRI(nlri)
-		anyPattrs, _ = apiutil.MarshalPathAttributes(path.GetPathAttrs())
-	}
+	anyNlri, _ := apiutil.MarshalNLRI(nlri)
+	anyPattrs, _ := apiutil.MarshalPathAttributes(path.GetPathAttrs())
 	var binNlri []byte
-	if onlyBinary || nlriBinary {
+	if nlri_binary {
 		binNlri, _ = nlri.Serialize()
 	}
 	var binPattrs [][]byte
-	if onlyBinary || attributeBinary {
+	if attribute_binary {
 		pa := path.GetPathAttrs()
 		binPattrs = make([][]byte, 0, len(pa))
 		for _, a := range pa {
@@ -231,38 +219,19 @@ func getValidation(v map[*table.Path]*table.Validation, p *table.Path) *table.Va
 func (s *server) ListPath(r *api.ListPathRequest, stream api.GobgpApi_ListPathServer) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	batchSize := r.BatchSize
-	if batchSize == 0 {
-		batchSize = defaultListPathBatchSize
-	}
 	l := make([]*api.Destination, 0)
-	send := func() error {
-		for _, d := range l {
-			if err := stream.Send(&api.ListPathResponse{Destination: d}); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	var sendErr error
 	err := s.bgpServer.ListPath(ctx, r, func(d *api.Destination) {
-		if uint64(len(l)) < batchSize {
-			l = append(l, d)
-			return
-		}
-		if sendErr = send(); sendErr != nil {
-			cancel()
-			return
-		}
-		l = l[:0]
+		l = append(l, d)
 	})
-	if sendErr != nil {
-		return sendErr
-	}
 	if err != nil {
 		return err
 	}
-	return send()
+	for _, d := range l {
+		if err := stream.Send(&api.ListPathResponse{Destination: d}); err != nil {
+			break
+		}
+	}
+	return err
 }
 
 func (s *server) WatchEvent(r *api.WatchEventRequest, stream api.GobgpApi_WatchEventServer) error {
@@ -297,8 +266,8 @@ func (s *server) SetPolicies(ctx context.Context, r *api.SetPoliciesRequest) (*e
 	return &emptypb.Empty{}, s.bgpServer.SetPolicies(ctx, r)
 }
 
-func newRoutingPolicyFromApiStruct(arg *api.SetPoliciesRequest) (*oc.RoutingPolicy, error) {
-	policyDefinitions := make([]oc.PolicyDefinition, 0, len(arg.Policies))
+func newRoutingPolicyFromApiStruct(arg *api.SetPoliciesRequest) (*config.RoutingPolicy, error) {
+	policyDefinitions := make([]config.PolicyDefinition, 0, len(arg.Policies))
 	for _, p := range arg.Policies {
 		pd, err := newConfigPolicyFromApiStruct(p)
 		if err != nil {
@@ -312,7 +281,7 @@ func newRoutingPolicyFromApiStruct(arg *api.SetPoliciesRequest) (*oc.RoutingPoli
 		return nil, err
 	}
 
-	return &oc.RoutingPolicy{
+	return &config.RoutingPolicy{
 		DefinedSets:       *definedSets,
 		PolicyDefinitions: policyDefinitions,
 	}, nil
@@ -526,7 +495,7 @@ func (s *server) DeleteVrf(ctx context.Context, r *api.DeleteVrfRequest) (*empty
 	return &emptypb.Empty{}, s.bgpServer.DeleteVrf(ctx, r)
 }
 
-func readMpGracefulRestartFromAPIStruct(c *oc.MpGracefulRestart, a *api.MpGracefulRestart) {
+func readMpGracefulRestartFromAPIStruct(c *config.MpGracefulRestart, a *api.MpGracefulRestart) {
 	if c == nil || a == nil {
 		return
 	}
@@ -535,16 +504,16 @@ func readMpGracefulRestartFromAPIStruct(c *oc.MpGracefulRestart, a *api.MpGracef
 	}
 }
 
-func readAfiSafiConfigFromAPIStruct(c *oc.AfiSafiConfig, a *api.AfiSafiConfig) {
+func readAfiSafiConfigFromAPIStruct(c *config.AfiSafiConfig, a *api.AfiSafiConfig) {
 	if c == nil || a == nil {
 		return
 	}
 	rf := bgp.AfiSafiToRouteFamily(uint16(a.Family.Afi), uint8(a.Family.Safi))
-	c.AfiSafiName = oc.AfiSafiType(rf.String())
+	c.AfiSafiName = config.AfiSafiType(rf.String())
 	c.Enabled = a.Enabled
 }
 
-func readAfiSafiStateFromAPIStruct(s *oc.AfiSafiState, a *api.AfiSafiConfig) {
+func readAfiSafiStateFromAPIStruct(s *config.AfiSafiState, a *api.AfiSafiConfig) {
 	if s == nil || a == nil {
 		return
 	}
@@ -552,23 +521,23 @@ func readAfiSafiStateFromAPIStruct(s *oc.AfiSafiState, a *api.AfiSafiConfig) {
 	s.Family = bgp.AfiSafiToRouteFamily(uint16(a.Family.Afi), uint8(a.Family.Safi))
 }
 
-func readPrefixLimitFromAPIStruct(c *oc.PrefixLimit, a *api.PrefixLimit) {
+func readPrefixLimitFromAPIStruct(c *config.PrefixLimit, a *api.PrefixLimit) {
 	if c == nil || a == nil {
 		return
 	}
 	c.Config.MaxPrefixes = a.MaxPrefixes
-	c.Config.ShutdownThresholdPct = oc.Percentage(a.ShutdownThresholdPct)
+	c.Config.ShutdownThresholdPct = config.Percentage(a.ShutdownThresholdPct)
 }
 
-func readApplyPolicyFromAPIStruct(c *oc.ApplyPolicy, a *api.ApplyPolicy) {
+func readApplyPolicyFromAPIStruct(c *config.ApplyPolicy, a *api.ApplyPolicy) {
 	if c == nil || a == nil {
 		return
 	}
-	f := func(a api.RouteAction) oc.DefaultPolicyType {
+	f := func(a api.RouteAction) config.DefaultPolicyType {
 		if a == api.RouteAction_ACCEPT {
-			return oc.DEFAULT_POLICY_TYPE_ACCEPT_ROUTE
+			return config.DEFAULT_POLICY_TYPE_ACCEPT_ROUTE
 		} else if a == api.RouteAction_REJECT {
-			return oc.DEFAULT_POLICY_TYPE_REJECT_ROUTE
+			return config.DEFAULT_POLICY_TYPE_REJECT_ROUTE
 		}
 		return ""
 	}
@@ -593,7 +562,7 @@ func readApplyPolicyFromAPIStruct(c *oc.ApplyPolicy, a *api.ApplyPolicy) {
 	}
 }
 
-func readRouteSelectionOptionsFromAPIStruct(c *oc.RouteSelectionOptions, a *api.RouteSelectionOptions) {
+func readRouteSelectionOptionsFromAPIStruct(c *config.RouteSelectionOptions, a *api.RouteSelectionOptions) {
 	if c == nil || a == nil {
 		return
 	}
@@ -607,7 +576,7 @@ func readRouteSelectionOptionsFromAPIStruct(c *oc.RouteSelectionOptions, a *api.
 	}
 }
 
-func readUseMultiplePathsFromAPIStruct(c *oc.UseMultiplePaths, a *api.UseMultiplePaths) {
+func readUseMultiplePathsFromAPIStruct(c *config.UseMultiplePaths, a *api.UseMultiplePaths) {
 	if c == nil || a == nil {
 		return
 	}
@@ -615,23 +584,23 @@ func readUseMultiplePathsFromAPIStruct(c *oc.UseMultiplePaths, a *api.UseMultipl
 		c.Config.Enabled = a.Config.Enabled
 	}
 	if a.Ebgp != nil && a.Ebgp.Config != nil {
-		c.Ebgp = oc.Ebgp{
-			Config: oc.EbgpConfig{
+		c.Ebgp = config.Ebgp{
+			Config: config.EbgpConfig{
 				AllowMultipleAs: a.Ebgp.Config.AllowMultipleAsn,
 				MaximumPaths:    a.Ebgp.Config.MaximumPaths,
 			},
 		}
 	}
 	if a.Ibgp != nil && a.Ibgp.Config != nil {
-		c.Ibgp = oc.Ibgp{
-			Config: oc.IbgpConfig{
+		c.Ibgp = config.Ibgp{
+			Config: config.IbgpConfig{
 				MaximumPaths: a.Ibgp.Config.MaximumPaths,
 			},
 		}
 	}
 }
 
-func readRouteTargetMembershipFromAPIStruct(c *oc.RouteTargetMembership, a *api.RouteTargetMembership) {
+func readRouteTargetMembershipFromAPIStruct(c *config.RouteTargetMembership, a *api.RouteTargetMembership) {
 	if c == nil || a == nil {
 		return
 	}
@@ -640,7 +609,7 @@ func readRouteTargetMembershipFromAPIStruct(c *oc.RouteTargetMembership, a *api.
 	}
 }
 
-func readLongLivedGracefulRestartFromAPIStruct(c *oc.LongLivedGracefulRestart, a *api.LongLivedGracefulRestart) {
+func readLongLivedGracefulRestartFromAPIStruct(c *config.LongLivedGracefulRestart, a *api.LongLivedGracefulRestart) {
 	if c == nil || a == nil {
 		return
 	}
@@ -650,7 +619,7 @@ func readLongLivedGracefulRestartFromAPIStruct(c *oc.LongLivedGracefulRestart, a
 	}
 }
 
-func readAddPathsFromAPIStruct(c *oc.AddPaths, a *api.AddPaths) {
+func readAddPathsFromAPIStruct(c *config.AddPaths, a *api.AddPaths) {
 	if c == nil || a == nil {
 		return
 	}
@@ -660,8 +629,8 @@ func readAddPathsFromAPIStruct(c *oc.AddPaths, a *api.AddPaths) {
 	}
 }
 
-func newNeighborFromAPIStruct(a *api.Peer) (*oc.Neighbor, error) {
-	pconf := &oc.Neighbor{}
+func newNeighborFromAPIStruct(a *api.Peer) (*config.Neighbor, error) {
+	pconf := &config.Neighbor{}
 	if a.Conf != nil {
 		pconf.Config.PeerAs = a.Conf.PeerAsn
 		pconf.Config.LocalAs = a.Conf.LocalAsn
@@ -669,20 +638,19 @@ func newNeighborFromAPIStruct(a *api.Peer) (*oc.Neighbor, error) {
 		pconf.Config.RouteFlapDamping = a.Conf.RouteFlapDamping
 		pconf.Config.Description = a.Conf.Description
 		pconf.Config.PeerGroup = a.Conf.PeerGroup
-		pconf.Config.PeerType = oc.IntToPeerTypeMap[int(a.Conf.Type)]
+		pconf.Config.PeerType = config.IntToPeerTypeMap[int(a.Conf.Type)]
 		pconf.Config.NeighborAddress = a.Conf.NeighborAddress
 		pconf.Config.AdminDown = a.Conf.AdminDown
 		pconf.Config.NeighborInterface = a.Conf.NeighborInterface
 		pconf.Config.Vrf = a.Conf.Vrf
 		pconf.AsPathOptions.Config.AllowOwnAs = uint8(a.Conf.AllowOwnAsn)
 		pconf.AsPathOptions.Config.ReplacePeerAs = a.Conf.ReplacePeerAsn
-		pconf.Config.SendSoftwareVersion = a.Conf.SendSoftwareVersion
 
 		switch a.Conf.RemovePrivate {
 		case api.RemovePrivate_REMOVE_ALL:
-			pconf.Config.RemovePrivateAs = oc.REMOVE_PRIVATE_AS_OPTION_ALL
+			pconf.Config.RemovePrivateAs = config.REMOVE_PRIVATE_AS_OPTION_ALL
 		case api.RemovePrivate_REPLACE:
-			pconf.Config.RemovePrivateAs = oc.REMOVE_PRIVATE_AS_OPTION_REPLACE
+			pconf.Config.RemovePrivateAs = config.REMOVE_PRIVATE_AS_OPTION_REPLACE
 		}
 
 		if a.State != nil {
@@ -701,7 +669,7 @@ func newNeighborFromAPIStruct(a *api.Peer) (*oc.Neighbor, error) {
 		}
 
 		for _, af := range a.AfiSafis {
-			afiSafi := oc.AfiSafi{}
+			afiSafi := config.AfiSafi{}
 			readMpGracefulRestartFromAPIStruct(&afiSafi.MpGracefulRestart, af.MpGracefulRestart)
 			readAfiSafiConfigFromAPIStruct(&afiSafi.Config, af.Config)
 			readAfiSafiStateFromAPIStruct(&afiSafi.State, af.Config)
@@ -722,7 +690,6 @@ func newNeighborFromAPIStruct(a *api.Peer) (*oc.Neighbor, error) {
 			pconf.Timers.Config.HoldTime = float64(a.Timers.Config.HoldTime)
 			pconf.Timers.Config.KeepaliveInterval = float64(a.Timers.Config.KeepaliveInterval)
 			pconf.Timers.Config.MinimumAdvertisementInterval = float64(a.Timers.Config.MinimumAdvertisementInterval)
-			pconf.Timers.Config.IdleHoldTimeAfterReset = float64(a.Timers.Config.IdleHoldTimeAfterReset)
 		}
 		if a.Timers.State != nil {
 			pconf.Timers.State.KeepaliveInterval = float64(a.Timers.State.KeepaliveInterval)
@@ -730,7 +697,7 @@ func newNeighborFromAPIStruct(a *api.Peer) (*oc.Neighbor, error) {
 		}
 	}
 	if a.RouteReflector != nil {
-		pconf.RouteReflector.Config.RouteReflectorClusterId = oc.RrClusterIdType(a.RouteReflector.RouteReflectorClusterId)
+		pconf.RouteReflector.Config.RouteReflectorClusterId = config.RrClusterIdType(a.RouteReflector.RouteReflectorClusterId)
 		pconf.RouteReflector.Config.RouteReflectorClient = a.RouteReflector.RouteReflectorClient
 	}
 	if a.RouteServer != nil {
@@ -753,7 +720,6 @@ func newNeighborFromAPIStruct(a *api.Peer) (*oc.Neighbor, error) {
 		pconf.Transport.Config.RemotePort = uint16(a.Transport.RemotePort)
 		pconf.Transport.Config.LocalPort = uint16(a.Transport.LocalPort)
 		pconf.Transport.Config.BindInterface = a.Transport.BindInterface
-		pconf.Transport.Config.TcpMss = uint16(a.Transport.TcpMss)
 	}
 	if a.EbgpMultihop != nil {
 		pconf.EbgpMultihop.Config.Enabled = a.EbgpMultihop.Enabled
@@ -764,11 +730,11 @@ func newNeighborFromAPIStruct(a *api.Peer) (*oc.Neighbor, error) {
 		pconf.TtlSecurity.Config.TtlMin = uint8(a.TtlSecurity.TtlMin)
 	}
 	if a.State != nil {
-		pconf.State.SessionState = oc.SessionState(strings.ToUpper(string(a.State.SessionState)))
-		pconf.State.AdminState = oc.IntToAdminStateMap[int(a.State.AdminState)]
+		pconf.State.SessionState = config.SessionState(strings.ToUpper(string(a.State.SessionState)))
+		pconf.State.AdminState = config.IntToAdminStateMap[int(a.State.AdminState)]
 
 		pconf.State.PeerAs = a.State.PeerAsn
-		pconf.State.PeerType = oc.IntToPeerTypeMap[int(a.State.Type)]
+		pconf.State.PeerType = config.IntToPeerTypeMap[int(a.State.Type)]
 		pconf.State.NeighborAddress = a.State.NeighborAddress
 
 		if a.State.Messages != nil {
@@ -794,8 +760,8 @@ func newNeighborFromAPIStruct(a *api.Peer) (*oc.Neighbor, error) {
 	return pconf, nil
 }
 
-func newPeerGroupFromAPIStruct(a *api.PeerGroup) (*oc.PeerGroup, error) {
-	pconf := &oc.PeerGroup{}
+func newPeerGroupFromAPIStruct(a *api.PeerGroup) (*config.PeerGroup, error) {
+	pconf := &config.PeerGroup{}
 	if a.Conf != nil {
 		pconf.Config.PeerAs = a.Conf.PeerAsn
 		pconf.Config.LocalAs = a.Conf.LocalAsn
@@ -806,13 +772,13 @@ func newPeerGroupFromAPIStruct(a *api.PeerGroup) (*oc.PeerGroup, error) {
 
 		switch a.Conf.RemovePrivate {
 		case api.RemovePrivate_REMOVE_ALL:
-			pconf.Config.RemovePrivateAs = oc.REMOVE_PRIVATE_AS_OPTION_ALL
+			pconf.Config.RemovePrivateAs = config.REMOVE_PRIVATE_AS_OPTION_ALL
 		case api.RemovePrivate_REPLACE:
-			pconf.Config.RemovePrivateAs = oc.REMOVE_PRIVATE_AS_OPTION_REPLACE
+			pconf.Config.RemovePrivateAs = config.REMOVE_PRIVATE_AS_OPTION_REPLACE
 		}
 
 		for _, af := range a.AfiSafis {
-			afiSafi := oc.AfiSafi{}
+			afiSafi := config.AfiSafi{}
 			readMpGracefulRestartFromAPIStruct(&afiSafi.MpGracefulRestart, af.MpGracefulRestart)
 			readAfiSafiConfigFromAPIStruct(&afiSafi.Config, af.Config)
 			readAfiSafiStateFromAPIStruct(&afiSafi.State, af.Config)
@@ -833,7 +799,6 @@ func newPeerGroupFromAPIStruct(a *api.PeerGroup) (*oc.PeerGroup, error) {
 			pconf.Timers.Config.HoldTime = float64(a.Timers.Config.HoldTime)
 			pconf.Timers.Config.KeepaliveInterval = float64(a.Timers.Config.KeepaliveInterval)
 			pconf.Timers.Config.MinimumAdvertisementInterval = float64(a.Timers.Config.MinimumAdvertisementInterval)
-			pconf.Timers.Config.IdleHoldTimeAfterReset = float64(a.Timers.Config.IdleHoldTimeAfterReset)
 		}
 		if a.Timers.State != nil {
 			pconf.Timers.State.KeepaliveInterval = float64(a.Timers.State.KeepaliveInterval)
@@ -841,7 +806,7 @@ func newPeerGroupFromAPIStruct(a *api.PeerGroup) (*oc.PeerGroup, error) {
 		}
 	}
 	if a.RouteReflector != nil {
-		pconf.RouteReflector.Config.RouteReflectorClusterId = oc.RrClusterIdType(a.RouteReflector.RouteReflectorClusterId)
+		pconf.RouteReflector.Config.RouteReflectorClusterId = config.RrClusterIdType(a.RouteReflector.RouteReflectorClusterId)
 		pconf.RouteReflector.Config.RouteReflectorClient = a.RouteReflector.RouteReflectorClient
 	}
 	if a.RouteServer != nil {
@@ -862,7 +827,6 @@ func newPeerGroupFromAPIStruct(a *api.PeerGroup) (*oc.PeerGroup, error) {
 		pconf.Transport.Config.LocalAddress = a.Transport.LocalAddress
 		pconf.Transport.Config.PassiveMode = a.Transport.PassiveMode
 		pconf.Transport.Config.RemotePort = uint16(a.Transport.RemotePort)
-		pconf.Transport.Config.TcpMss = uint16(a.Transport.TcpMss)
 	}
 	if a.EbgpMultihop != nil {
 		pconf.EbgpMultihop.Config.Enabled = a.EbgpMultihop.Enabled
@@ -876,7 +840,7 @@ func newPeerGroupFromAPIStruct(a *api.PeerGroup) (*oc.PeerGroup, error) {
 		pconf.State.TotalPaths = a.Info.TotalPaths
 		pconf.State.TotalPrefixes = a.Info.TotalPrefixes
 		pconf.State.PeerAs = a.Info.PeerAsn
-		pconf.State.PeerType = oc.IntToPeerTypeMap[int(a.Info.Type)]
+		pconf.State.PeerType = config.IntToPeerTypeMap[int(a.Info.Type)]
 	}
 	return pconf, nil
 }
@@ -930,24 +894,24 @@ func newPrefixFromApiStruct(a *api.Prefix) (*table.Prefix, error) {
 	}, nil
 }
 
-func newConfigPrefixFromAPIStruct(a *api.Prefix) (*oc.Prefix, error) {
+func newConfigPrefixFromAPIStruct(a *api.Prefix) (*config.Prefix, error) {
 	_, prefix, err := net.ParseCIDR(a.IpPrefix)
 	if err != nil {
 		return nil, err
 	}
-	return &oc.Prefix{
+	return &config.Prefix{
 		IpPrefix:        prefix.String(),
 		MasklengthRange: fmt.Sprintf("%d..%d", a.MaskLengthMin, a.MaskLengthMax),
 	}, nil
 }
 
-func newConfigDefinedSetsFromApiStruct(a []*api.DefinedSet) (*oc.DefinedSets, error) {
-	ps := make([]oc.PrefixSet, 0)
-	ns := make([]oc.NeighborSet, 0)
-	as := make([]oc.AsPathSet, 0)
-	cs := make([]oc.CommunitySet, 0)
-	es := make([]oc.ExtCommunitySet, 0)
-	ls := make([]oc.LargeCommunitySet, 0)
+func newConfigDefinedSetsFromApiStruct(a []*api.DefinedSet) (*config.DefinedSets, error) {
+	ps := make([]config.PrefixSet, 0)
+	ns := make([]config.NeighborSet, 0)
+	as := make([]config.AsPathSet, 0)
+	cs := make([]config.CommunitySet, 0)
+	es := make([]config.ExtCommunitySet, 0)
+	ls := make([]config.LargeCommunitySet, 0)
 
 	for _, ds := range a {
 		if ds.Name == "" {
@@ -955,7 +919,7 @@ func newConfigDefinedSetsFromApiStruct(a []*api.DefinedSet) (*oc.DefinedSets, er
 		}
 		switch table.DefinedType(ds.DefinedType) {
 		case table.DEFINED_TYPE_PREFIX:
-			prefixes := make([]oc.Prefix, 0, len(ds.Prefixes))
+			prefixes := make([]config.Prefix, 0, len(ds.Prefixes))
 			for _, p := range ds.Prefixes {
 				prefix, err := newConfigPrefixFromAPIStruct(p)
 				if err != nil {
@@ -963,32 +927,32 @@ func newConfigDefinedSetsFromApiStruct(a []*api.DefinedSet) (*oc.DefinedSets, er
 				}
 				prefixes = append(prefixes, *prefix)
 			}
-			ps = append(ps, oc.PrefixSet{
+			ps = append(ps, config.PrefixSet{
 				PrefixSetName: ds.Name,
 				PrefixList:    prefixes,
 			})
 		case table.DEFINED_TYPE_NEIGHBOR:
-			ns = append(ns, oc.NeighborSet{
+			ns = append(ns, config.NeighborSet{
 				NeighborSetName:  ds.Name,
 				NeighborInfoList: ds.List,
 			})
 		case table.DEFINED_TYPE_AS_PATH:
-			as = append(as, oc.AsPathSet{
+			as = append(as, config.AsPathSet{
 				AsPathSetName: ds.Name,
 				AsPathList:    ds.List,
 			})
 		case table.DEFINED_TYPE_COMMUNITY:
-			cs = append(cs, oc.CommunitySet{
+			cs = append(cs, config.CommunitySet{
 				CommunitySetName: ds.Name,
 				CommunityList:    ds.List,
 			})
 		case table.DEFINED_TYPE_EXT_COMMUNITY:
-			es = append(es, oc.ExtCommunitySet{
+			es = append(es, config.ExtCommunitySet{
 				ExtCommunitySetName: ds.Name,
 				ExtCommunityList:    ds.List,
 			})
 		case table.DEFINED_TYPE_LARGE_COMMUNITY:
-			ls = append(ls, oc.LargeCommunitySet{
+			ls = append(ls, config.LargeCommunitySet{
 				LargeCommunitySetName: ds.Name,
 				LargeCommunityList:    ds.List,
 			})
@@ -997,10 +961,10 @@ func newConfigDefinedSetsFromApiStruct(a []*api.DefinedSet) (*oc.DefinedSets, er
 		}
 	}
 
-	return &oc.DefinedSets{
+	return &config.DefinedSets{
 		PrefixSets:   ps,
 		NeighborSets: ns,
-		BgpDefinedSets: oc.BgpDefinedSets{
+		BgpDefinedSets: config.BgpDefinedSets{
 			AsPathSets:         as,
 			CommunitySets:      cs,
 			ExtCommunitySets:   es,
@@ -1035,22 +999,22 @@ func newDefinedSetFromApiStruct(a *api.DefinedSet) (table.DefinedSet, error) {
 		}
 		return table.NewNeighborSetFromApiStruct(a.Name, list)
 	case table.DEFINED_TYPE_AS_PATH:
-		return table.NewAsPathSet(oc.AsPathSet{
+		return table.NewAsPathSet(config.AsPathSet{
 			AsPathSetName: a.Name,
 			AsPathList:    a.List,
 		})
 	case table.DEFINED_TYPE_COMMUNITY:
-		return table.NewCommunitySet(oc.CommunitySet{
+		return table.NewCommunitySet(config.CommunitySet{
 			CommunitySetName: a.Name,
 			CommunityList:    a.List,
 		})
 	case table.DEFINED_TYPE_EXT_COMMUNITY:
-		return table.NewExtCommunitySet(oc.ExtCommunitySet{
+		return table.NewExtCommunitySet(config.ExtCommunitySet{
 			ExtCommunitySetName: a.Name,
 			ExtCommunityList:    a.List,
 		})
 	case table.DEFINED_TYPE_LARGE_COMMUNITY:
-		return table.NewLargeCommunitySet(oc.LargeCommunitySet{
+		return table.NewLargeCommunitySet(config.LargeCommunitySet{
 			LargeCommunitySetName: a.Name,
 			LargeCommunityList:    a.List,
 		})
@@ -1082,18 +1046,18 @@ func (s *server) DeleteDefinedSet(ctx context.Context, r *api.DeleteDefinedSetRe
 
 var _regexpMedActionType = regexp.MustCompile(`([+-]?)(\d+)`)
 
-func matchSetOptionsRestrictedTypeToAPI(t oc.MatchSetOptionsRestrictedType) api.MatchSet_Type {
+func matchSetOptionsRestrictedTypeToAPI(t config.MatchSetOptionsRestrictedType) api.MatchSet_Type {
 	t = t.DefaultAsNeeded()
 	switch t {
-	case oc.MATCH_SET_OPTIONS_RESTRICTED_TYPE_ANY:
+	case config.MATCH_SET_OPTIONS_RESTRICTED_TYPE_ANY:
 		return api.MatchSet_ANY
-	case oc.MATCH_SET_OPTIONS_RESTRICTED_TYPE_INVERT:
+	case config.MATCH_SET_OPTIONS_RESTRICTED_TYPE_INVERT:
 		return api.MatchSet_INVERT
 	}
 	return api.MatchSet_ANY
 }
 
-func toStatementApi(s *oc.Statement) *api.Statement {
+func toStatementApi(s *config.Statement) *api.Statement {
 	cs := &api.Conditions{}
 	if s.Conditions.MatchPrefixSet.PrefixSet != "" {
 		cs.PrefixSet = &api.MatchSet{
@@ -1157,9 +1121,9 @@ func toStatementApi(s *oc.Statement) *api.Statement {
 	as := &api.Actions{
 		RouteAction: func() api.RouteAction {
 			switch s.Actions.RouteDisposition {
-			case oc.ROUTE_DISPOSITION_ACCEPT_ROUTE:
+			case config.ROUTE_DISPOSITION_ACCEPT_ROUTE:
 				return api.RouteAction_ACCEPT
-			case oc.ROUTE_DISPOSITION_REJECT_ROUTE:
+			case config.ROUTE_DISPOSITION_REJECT_ROUTE:
 				return api.RouteAction_REJECT
 			}
 			return api.RouteAction_NONE
@@ -1169,7 +1133,7 @@ func toStatementApi(s *oc.Statement) *api.Statement {
 				return nil
 			}
 			return &api.CommunityAction{
-				Type:        api.CommunityAction_Type(oc.BgpSetCommunityOptionTypeToIntMap[oc.BgpSetCommunityOptionType(s.Actions.BgpActions.SetCommunity.Options)]),
+				Type:        api.CommunityAction_Type(config.BgpSetCommunityOptionTypeToIntMap[config.BgpSetCommunityOptionType(s.Actions.BgpActions.SetCommunity.Options)]),
 				Communities: s.Actions.BgpActions.SetCommunity.SetCommunityMethod.CommunitiesList}
 		}(),
 		Med: func() *api.MedAction {
@@ -1217,7 +1181,7 @@ func toStatementApi(s *oc.Statement) *api.Statement {
 				return nil
 			}
 			return &api.CommunityAction{
-				Type:        api.CommunityAction_Type(oc.BgpSetCommunityOptionTypeToIntMap[oc.BgpSetCommunityOptionType(s.Actions.BgpActions.SetExtCommunity.Options)]),
+				Type:        api.CommunityAction_Type(config.BgpSetCommunityOptionTypeToIntMap[config.BgpSetCommunityOptionType(s.Actions.BgpActions.SetExtCommunity.Options)]),
 				Communities: s.Actions.BgpActions.SetExtCommunity.SetExtCommunityMethod.CommunitiesList,
 			}
 		}(),
@@ -1226,7 +1190,7 @@ func toStatementApi(s *oc.Statement) *api.Statement {
 				return nil
 			}
 			return &api.CommunityAction{
-				Type:        api.CommunityAction_Type(oc.BgpSetCommunityOptionTypeToIntMap[oc.BgpSetCommunityOptionType(s.Actions.BgpActions.SetLargeCommunity.Options)]),
+				Type:        api.CommunityAction_Type(config.BgpSetCommunityOptionTypeToIntMap[config.BgpSetCommunityOptionType(s.Actions.BgpActions.SetLargeCommunity.Options)]),
 				Communities: s.Actions.BgpActions.SetLargeCommunity.SetLargeCommunityMethod.CommunitiesList,
 			}
 		}(),
@@ -1263,28 +1227,28 @@ func toStatementApi(s *oc.Statement) *api.Statement {
 	}
 }
 
-func toConfigMatchSetOption(a api.MatchSet_Type) (oc.MatchSetOptionsType, error) {
-	var typ oc.MatchSetOptionsType
+func toConfigMatchSetOption(a api.MatchSet_Type) (config.MatchSetOptionsType, error) {
+	var typ config.MatchSetOptionsType
 	switch a {
 	case api.MatchSet_ANY:
-		typ = oc.MATCH_SET_OPTIONS_TYPE_ANY
+		typ = config.MATCH_SET_OPTIONS_TYPE_ANY
 	case api.MatchSet_ALL:
-		typ = oc.MATCH_SET_OPTIONS_TYPE_ALL
+		typ = config.MATCH_SET_OPTIONS_TYPE_ALL
 	case api.MatchSet_INVERT:
-		typ = oc.MATCH_SET_OPTIONS_TYPE_INVERT
+		typ = config.MATCH_SET_OPTIONS_TYPE_INVERT
 	default:
 		return typ, fmt.Errorf("invalid match type")
 	}
 	return typ, nil
 }
 
-func toConfigMatchSetOptionRestricted(a api.MatchSet_Type) (oc.MatchSetOptionsRestrictedType, error) {
-	var typ oc.MatchSetOptionsRestrictedType
+func toConfigMatchSetOptionRestricted(a api.MatchSet_Type) (config.MatchSetOptionsRestrictedType, error) {
+	var typ config.MatchSetOptionsRestrictedType
 	switch a {
 	case api.MatchSet_ANY:
-		typ = oc.MATCH_SET_OPTIONS_RESTRICTED_TYPE_ANY
+		typ = config.MATCH_SET_OPTIONS_RESTRICTED_TYPE_ANY
 	case api.MatchSet_INVERT:
-		typ = oc.MATCH_SET_OPTIONS_RESTRICTED_TYPE_INVERT
+		typ = config.MATCH_SET_OPTIONS_RESTRICTED_TYPE_INVERT
 	default:
 		return typ, fmt.Errorf("invalid match type")
 	}
@@ -1299,7 +1263,7 @@ func newPrefixConditionFromApiStruct(a *api.MatchSet) (*table.PrefixCondition, e
 	if err != nil {
 		return nil, err
 	}
-	c := oc.MatchPrefixSet{
+	c := config.MatchPrefixSet{
 		PrefixSet:       a.Name,
 		MatchSetOptions: typ,
 	}
@@ -1314,7 +1278,7 @@ func newNeighborConditionFromApiStruct(a *api.MatchSet) (*table.NeighborConditio
 	if err != nil {
 		return nil, err
 	}
-	c := oc.MatchNeighborSet{
+	c := config.MatchNeighborSet{
 		NeighborSet:     a.Name,
 		MatchSetOptions: typ,
 	}
@@ -1325,8 +1289,8 @@ func newAsPathLengthConditionFromApiStruct(a *api.AsPathLength) (*table.AsPathLe
 	if a == nil {
 		return nil, nil
 	}
-	return table.NewAsPathLengthCondition(oc.AsPathLength{
-		Operator: oc.IntToAttributeComparisonMap[int(a.Type)],
+	return table.NewAsPathLengthCondition(config.AsPathLength{
+		Operator: config.IntToAttributeComparisonMap[int(a.Type)],
 		Value:    a.Length,
 	})
 }
@@ -1339,7 +1303,7 @@ func newAsPathConditionFromApiStruct(a *api.MatchSet) (*table.AsPathCondition, e
 	if err != nil {
 		return nil, err
 	}
-	c := oc.MatchAsPathSet{
+	c := config.MatchAsPathSet{
 		AsPathSet:       a.Name,
 		MatchSetOptions: typ,
 	}
@@ -1350,14 +1314,14 @@ func newRpkiValidationConditionFromApiStruct(a int32) (*table.RpkiValidationCond
 	if a < 1 {
 		return nil, nil
 	}
-	return table.NewRpkiValidationCondition(oc.IntToRpkiValidationResultTypeMap[int(a)])
+	return table.NewRpkiValidationCondition(config.IntToRpkiValidationResultTypeMap[int(a)])
 }
 
 func newRouteTypeConditionFromApiStruct(a api.Conditions_RouteType) (*table.RouteTypeCondition, error) {
 	if a == 0 {
 		return nil, nil
 	}
-	typ, ok := oc.IntToRouteTypeMap[int(a)]
+	typ, ok := config.IntToRouteTypeMap[int(a)]
 	if !ok {
 		return nil, fmt.Errorf("invalid route type: %d", a)
 	}
@@ -1372,7 +1336,7 @@ func newCommunityConditionFromApiStruct(a *api.MatchSet) (*table.CommunityCondit
 	if err != nil {
 		return nil, err
 	}
-	c := oc.MatchCommunitySet{
+	c := config.MatchCommunitySet{
 		CommunitySet:    a.Name,
 		MatchSetOptions: typ,
 	}
@@ -1387,7 +1351,7 @@ func newExtCommunityConditionFromApiStruct(a *api.MatchSet) (*table.ExtCommunity
 	if err != nil {
 		return nil, err
 	}
-	c := oc.MatchExtCommunitySet{
+	c := config.MatchExtCommunitySet{
 		ExtCommunitySet: a.Name,
 		MatchSetOptions: typ,
 	}
@@ -1402,7 +1366,7 @@ func newLargeCommunityConditionFromApiStruct(a *api.MatchSet) (*table.LargeCommu
 	if err != nil {
 		return nil, err
 	}
-	c := oc.MatchLargeCommunitySet{
+	c := config.MatchLargeCommunitySet{
 		LargeCommunitySet: a.Name,
 		MatchSetOptions:   typ,
 	}
@@ -1421,11 +1385,11 @@ func newAfiSafiInConditionFromApiStruct(a []*api.Family) (*table.AfiSafiInCondit
 	if a == nil {
 		return nil, nil
 	}
-	afiSafiTypes := make([]oc.AfiSafiType, 0, len(a))
+	afiSafiTypes := make([]config.AfiSafiType, 0, len(a))
 	for _, aType := range a {
 		rf := bgp.AfiSafiToRouteFamily(uint16(aType.Afi), uint8(aType.Safi))
 		if configType, ok := bgp.AddressFamilyNameMap[bgp.RouteFamily(rf)]; ok {
-			afiSafiTypes = append(afiSafiTypes, oc.AfiSafiType(configType))
+			afiSafiTypes = append(afiSafiTypes, config.AfiSafiType(configType))
 		} else {
 			return nil, fmt.Errorf("unknown afi-safi-in type value: %v", aType)
 		}
@@ -1450,9 +1414,9 @@ func newCommunityActionFromApiStruct(a *api.CommunityAction) (*table.CommunityAc
 	if a == nil {
 		return nil, nil
 	}
-	return table.NewCommunityAction(oc.SetCommunity{
-		Options: string(oc.IntToBgpSetCommunityOptionTypeMap[int(a.Type)]),
-		SetCommunityMethod: oc.SetCommunityMethod{
+	return table.NewCommunityAction(config.SetCommunity{
+		Options: string(config.IntToBgpSetCommunityOptionTypeMap[int(a.Type)]),
+		SetCommunityMethod: config.SetCommunityMethod{
 			CommunitiesList: a.Communities,
 		},
 	})
@@ -1462,9 +1426,9 @@ func newExtCommunityActionFromApiStruct(a *api.CommunityAction) (*table.ExtCommu
 	if a == nil {
 		return nil, nil
 	}
-	return table.NewExtCommunityAction(oc.SetExtCommunity{
-		Options: string(oc.IntToBgpSetCommunityOptionTypeMap[int(a.Type)]),
-		SetExtCommunityMethod: oc.SetExtCommunityMethod{
+	return table.NewExtCommunityAction(config.SetExtCommunity{
+		Options: string(config.IntToBgpSetCommunityOptionTypeMap[int(a.Type)]),
+		SetExtCommunityMethod: config.SetExtCommunityMethod{
 			CommunitiesList: a.Communities,
 		},
 	})
@@ -1474,9 +1438,9 @@ func newLargeCommunityActionFromApiStruct(a *api.CommunityAction) (*table.LargeC
 	if a == nil {
 		return nil, nil
 	}
-	return table.NewLargeCommunityAction(oc.SetLargeCommunity{
-		Options: oc.IntToBgpSetCommunityOptionTypeMap[int(a.Type)],
-		SetLargeCommunityMethod: oc.SetLargeCommunityMethod{
+	return table.NewLargeCommunityAction(config.SetLargeCommunity{
+		Options: config.IntToBgpSetCommunityOptionTypeMap[int(a.Type)],
+		SetLargeCommunityMethod: config.SetLargeCommunityMethod{
 			CommunitiesList: a.Communities,
 		},
 	})
@@ -1500,7 +1464,7 @@ func newAsPathPrependActionFromApiStruct(a *api.AsPrependAction) (*table.AsPathP
 	if a == nil {
 		return nil, nil
 	}
-	return table.NewAsPathPrependAction(oc.SetAsPathPrepend{
+	return table.NewAsPathPrependAction(config.SetAsPathPrepend{
 		RepeatN: uint8(a.Repeat),
 		As: func() string {
 			if a.UseLeftMost {
@@ -1515,7 +1479,7 @@ func newNexthopActionFromApiStruct(a *api.NexthopAction) (*table.NexthopAction, 
 	if a == nil {
 		return nil, nil
 	}
-	return table.NewNexthopAction(oc.BgpNextHopType(
+	return table.NewNexthopAction(config.BgpNextHopType(
 		func() string {
 			if a.Self {
 				return "self"
@@ -1649,11 +1613,11 @@ func (s *server) DeleteStatement(ctx context.Context, r *api.DeleteStatementRequ
 	return &emptypb.Empty{}, s.bgpServer.DeleteStatement(ctx, r)
 }
 
-func newConfigPolicyFromApiStruct(a *api.Policy) (*oc.PolicyDefinition, error) {
+func newConfigPolicyFromApiStruct(a *api.Policy) (*config.PolicyDefinition, error) {
 	if a.Name == "" {
 		return nil, fmt.Errorf("empty policy name")
 	}
-	stmts := make([]oc.Statement, 0, len(a.Statements))
+	stmts := make([]config.Statement, 0, len(a.Statements))
 	for idx, x := range a.Statements {
 		if x.Name == "" {
 			x.Name = fmt.Sprintf("%s_stmt%d", a.Name, idx)
@@ -1665,7 +1629,7 @@ func newConfigPolicyFromApiStruct(a *api.Policy) (*oc.PolicyDefinition, error) {
 		stmt := y.ToConfig()
 		stmts = append(stmts, *stmt)
 	}
-	return &oc.PolicyDefinition{
+	return &config.PolicyDefinition{
 		Name:       a.Name,
 		Statements: stmts,
 	}, nil
@@ -1753,10 +1717,10 @@ func defaultRouteType(d api.RouteAction) table.RouteType {
 	}
 }
 
-func toPolicyDefinition(policies []*api.Policy) []*oc.PolicyDefinition {
-	l := make([]*oc.PolicyDefinition, 0, len(policies))
+func toPolicyDefinition(policies []*api.Policy) []*config.PolicyDefinition {
+	l := make([]*config.PolicyDefinition, 0, len(policies))
 	for _, p := range policies {
-		l = append(l, &oc.PolicyDefinition{Name: p.Name})
+		l = append(l, &config.PolicyDefinition{Name: p.Name})
 	}
 	return l
 }
@@ -1777,17 +1741,17 @@ func (s *server) GetBgp(ctx context.Context, r *api.GetBgpRequest) (*api.GetBgpR
 	return s.bgpServer.GetBgp(ctx, r)
 }
 
-func newGlobalFromAPIStruct(a *api.Global) *oc.Global {
-	families := make([]oc.AfiSafi, 0, len(a.Families))
+func newGlobalFromAPIStruct(a *api.Global) *config.Global {
+	families := make([]config.AfiSafi, 0, len(a.Families))
 	for _, f := range a.Families {
-		name := oc.IntToAfiSafiTypeMap[int(f)]
+		name := config.IntToAfiSafiTypeMap[int(f)]
 		rf, _ := bgp.GetRouteFamily(string(name))
-		families = append(families, oc.AfiSafi{
-			Config: oc.AfiSafiConfig{
+		families = append(families, config.AfiSafi{
+			Config: config.AfiSafiConfig{
 				AfiSafiName: name,
 				Enabled:     true,
 			},
-			State: oc.AfiSafiState{
+			State: config.AfiSafiState{
 				AfiSafiName: name,
 				Enabled:     true,
 				Family:      rf,
@@ -1795,11 +1759,11 @@ func newGlobalFromAPIStruct(a *api.Global) *oc.Global {
 		})
 	}
 
-	applyPolicy := &oc.ApplyPolicy{}
+	applyPolicy := &config.ApplyPolicy{}
 	readApplyPolicyFromAPIStruct(applyPolicy, a.ApplyPolicy)
 
-	global := &oc.Global{
-		Config: oc.GlobalConfig{
+	global := &config.Global{
+		Config: config.GlobalConfig{
 			As:               a.Asn,
 			RouterId:         a.RouterId,
 			Port:             a.ListenPort,
@@ -1807,15 +1771,15 @@ func newGlobalFromAPIStruct(a *api.Global) *oc.Global {
 		},
 		ApplyPolicy: *applyPolicy,
 		AfiSafis:    families,
-		UseMultiplePaths: oc.UseMultiplePaths{
-			Config: oc.UseMultiplePathsConfig{
+		UseMultiplePaths: config.UseMultiplePaths{
+			Config: config.UseMultiplePathsConfig{
 				Enabled: a.UseMultiplePaths,
 			},
 		},
 	}
 	if a.RouteSelectionOptions != nil {
-		global.RouteSelectionOptions = oc.RouteSelectionOptions{
-			Config: oc.RouteSelectionOptionsConfig{
+		global.RouteSelectionOptions = config.RouteSelectionOptions{
+			Config: config.RouteSelectionOptionsConfig{
 				AlwaysCompareMed:         a.RouteSelectionOptions.AlwaysCompareMed,
 				IgnoreAsPathLength:       a.RouteSelectionOptions.IgnoreAsPathLength,
 				ExternalCompareRouterId:  a.RouteSelectionOptions.ExternalCompareRouterId,
@@ -1827,16 +1791,16 @@ func newGlobalFromAPIStruct(a *api.Global) *oc.Global {
 		}
 	}
 	if a.DefaultRouteDistance != nil {
-		global.DefaultRouteDistance = oc.DefaultRouteDistance{
-			Config: oc.DefaultRouteDistanceConfig{
+		global.DefaultRouteDistance = config.DefaultRouteDistance{
+			Config: config.DefaultRouteDistanceConfig{
 				ExternalRouteDistance: uint8(a.DefaultRouteDistance.ExternalRouteDistance),
 				InternalRouteDistance: uint8(a.DefaultRouteDistance.InternalRouteDistance),
 			},
 		}
 	}
 	if a.Confederation != nil {
-		global.Confederation = oc.Confederation{
-			Config: oc.ConfederationConfig{
+		global.Confederation = config.Confederation{
+			Config: config.ConfederationConfig{
 				Enabled:      a.Confederation.Enabled,
 				Identifier:   a.Confederation.Identifier,
 				MemberAsList: a.Confederation.MemberAsList,
@@ -1844,8 +1808,8 @@ func newGlobalFromAPIStruct(a *api.Global) *oc.Global {
 		}
 	}
 	if a.GracefulRestart != nil {
-		global.GracefulRestart = oc.GracefulRestart{
-			Config: oc.GracefulRestartConfig{
+		global.GracefulRestart = config.GracefulRestart{
+			Config: config.GracefulRestartConfig{
 				Enabled:             a.GracefulRestart.Enabled,
 				RestartTime:         uint16(a.GracefulRestart.RestartTime),
 				StaleRoutesTime:     float64(a.GracefulRestart.StaleRoutesTime),

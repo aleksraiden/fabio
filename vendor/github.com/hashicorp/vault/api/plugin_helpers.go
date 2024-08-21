@@ -1,10 +1,6 @@
-// Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
-
 package api
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -13,27 +9,12 @@ import (
 	"net/url"
 	"os"
 
-	"github.com/go-jose/go-jose/v3/jwt"
+	squarejwt "gopkg.in/square/go-jose.v2/jwt"
 
 	"github.com/hashicorp/errwrap"
 )
 
-// This file contains helper code used when writing Vault auth method or secrets engine plugins.
-//
-// As such, it would be better located in the sdk module with the rest of the code which is only to support plugins,
-// rather than api, but is here for historical reasons. (The api module used to depend on the sdk module, this code
-// calls NewClient within the api package, so placing it in the sdk would have created a dependency cycle. This reason
-// is now historical, as the dependency between sdk and api has since been reversed in direction.)
-// Moving this code to the sdk would be appropriate if an api v2.0.0 release is ever planned.
-//
-// This helper code is used when a plugin is hosted by Vault 1.11 and earlier. Vault 1.12 and sdk v0.6.0 introduced
-// version 5 of the backend plugin interface, which uses go-plugin's AutoMTLS feature instead of this code.
-
-const (
-	// PluginAutoMTLSEnv is used to ensure AutoMTLS is used. This will override
-	// setting a TLSProviderFunc for a plugin.
-	PluginAutoMTLSEnv = "VAULT_PLUGIN_AUTOMTLS_ENABLED"
-
+var (
 	// PluginMetadataModeEnv is an ENV name used to disable TLS communication
 	// to bootstrap mounting plugins.
 	PluginMetadataModeEnv = "VAULT_PLUGIN_METADATA_MODE"
@@ -51,7 +32,6 @@ type PluginAPIClientMeta struct {
 	flagCAPath     string
 	flagClientCert string
 	flagClientKey  string
-	flagServerName string
 	flagInsecure   bool
 }
 
@@ -63,7 +43,6 @@ func (f *PluginAPIClientMeta) FlagSet() *flag.FlagSet {
 	fs.StringVar(&f.flagCAPath, "ca-path", "", "")
 	fs.StringVar(&f.flagClientCert, "client-cert", "", "")
 	fs.StringVar(&f.flagClientKey, "client-key", "", "")
-	fs.StringVar(&f.flagServerName, "tls-server-name", "", "")
 	fs.BoolVar(&f.flagInsecure, "tls-skip-verify", false, "")
 
 	return fs
@@ -72,13 +51,13 @@ func (f *PluginAPIClientMeta) FlagSet() *flag.FlagSet {
 // GetTLSConfig will return a TLSConfig based off the values from the flags
 func (f *PluginAPIClientMeta) GetTLSConfig() *TLSConfig {
 	// If we need custom TLS configuration, then set it
-	if f.flagCACert != "" || f.flagCAPath != "" || f.flagClientCert != "" || f.flagClientKey != "" || f.flagInsecure || f.flagServerName != "" {
+	if f.flagCACert != "" || f.flagCAPath != "" || f.flagClientCert != "" || f.flagClientKey != "" || f.flagInsecure {
 		t := &TLSConfig{
 			CACert:        f.flagCACert,
 			CAPath:        f.flagCAPath,
 			ClientCert:    f.flagClientCert,
 			ClientKey:     f.flagClientKey,
-			TLSServerName: f.flagServerName,
+			TLSServerName: "",
 			Insecure:      f.flagInsecure,
 		}
 
@@ -88,27 +67,22 @@ func (f *PluginAPIClientMeta) GetTLSConfig() *TLSConfig {
 	return nil
 }
 
-// VaultPluginTLSProvider wraps VaultPluginTLSProviderContext using context.Background.
-func VaultPluginTLSProvider(apiTLSConfig *TLSConfig) func() (*tls.Config, error) {
-	return VaultPluginTLSProviderContext(context.Background(), apiTLSConfig)
-}
-
-// VaultPluginTLSProviderContext is run inside a plugin and retrieves the response
+// VaultPluginTLSProvider is run inside a plugin and retrieves the response
 // wrapped TLS certificate from vault. It returns a configured TLS Config.
-func VaultPluginTLSProviderContext(ctx context.Context, apiTLSConfig *TLSConfig) func() (*tls.Config, error) {
-	if os.Getenv(PluginAutoMTLSEnv) == "true" || os.Getenv(PluginMetadataModeEnv) == "true" {
+func VaultPluginTLSProvider(apiTLSConfig *TLSConfig) func() (*tls.Config, error) {
+	if os.Getenv(PluginMetadataModeEnv) == "true" {
 		return nil
 	}
 
 	return func() (*tls.Config, error) {
 		unwrapToken := os.Getenv(PluginUnwrapTokenEnv)
 
-		parsedJWT, err := jwt.ParseSigned(unwrapToken)
+		parsedJWT, err := squarejwt.ParseSigned(unwrapToken)
 		if err != nil {
 			return nil, errwrap.Wrapf("error parsing wrapping token: {{err}}", err)
 		}
 
-		allClaims := make(map[string]interface{})
+		var allClaims = make(map[string]interface{})
 		if err = parsedJWT.UnsafeClaimsWithoutVerification(&allClaims); err != nil {
 			return nil, errwrap.Wrapf("error parsing claims from wrapping token: {{err}}", err)
 		}
@@ -144,10 +118,7 @@ func VaultPluginTLSProviderContext(ctx context.Context, apiTLSConfig *TLSConfig)
 			return nil, errwrap.Wrapf("error during api client creation: {{err}}", err)
 		}
 
-		// Reset token value to make sure nothing has been set by default
-		client.ClearToken()
-
-		secret, err := client.Logical().UnwrapWithContext(ctx, unwrapToken)
+		secret, err := client.Logical().Unwrap(unwrapToken)
 		if err != nil {
 			return nil, errwrap.Wrapf("error during token unwrap request: {{err}}", err)
 		}
@@ -208,6 +179,7 @@ func VaultPluginTLSProviderContext(ctx context.Context, apiTLSConfig *TLSConfig)
 			Certificates: []tls.Certificate{cert},
 			ServerName:   serverCert.Subject.CommonName,
 		}
+		tlsConfig.BuildNameToCertificate()
 
 		return tlsConfig, nil
 	}

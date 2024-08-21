@@ -1,8 +1,3 @@
-//go:build !go1.21
-
-// TODO: when this file is deleted (after Go 1.20 support is dropped), delete
-// all of grpcrand and call the rand package directly.
-
 /*
  *
  * Copyright 2018 gRPC authors.
@@ -76,25 +71,4 @@ func Uint64() uint64 {
 	mu.Lock()
 	defer mu.Unlock()
 	return r.Uint64()
-}
-
-// Uint32 implements rand.Uint32 on the grpcrand global source.
-func Uint32() uint32 {
-	mu.Lock()
-	defer mu.Unlock()
-	return r.Uint32()
-}
-
-// ExpFloat64 implements rand.ExpFloat64 on the grpcrand global source.
-func ExpFloat64() float64 {
-	mu.Lock()
-	defer mu.Unlock()
-	return r.ExpFloat64()
-}
-
-// Shuffle implements rand.Shuffle on the grpcrand global source.
-var Shuffle = func(n int, f func(int, int)) {
-	mu.Lock()
-	defer mu.Unlock()
-	r.Shuffle(n, f)
 }

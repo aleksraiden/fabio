@@ -3,10 +3,12 @@
 // license that can be found in the LICENSE file.
 
 //go:build linux
+// +build linux
 
 package unix
 
 import (
+	"bytes"
 	"unsafe"
 )
 
@@ -43,7 +45,13 @@ func NewIfreq(name string) (*Ifreq, error) {
 
 // Name returns the interface name associated with the Ifreq.
 func (ifr *Ifreq) Name() string {
-	return ByteSliceToString(ifr.raw.Ifrn[:])
+	// BytePtrToString requires a NULL terminator or the program may crash. If
+	// one is not present, just return the empty string.
+	if !bytes.Contains(ifr.raw.Ifrn[:], []byte{0x00}) {
+		return ""
+	}
+
+	return BytePtrToString(&ifr.raw.Ifrn[0])
 }
 
 // According to netdevice(7), only AF_INET addresses are returned for numerous
