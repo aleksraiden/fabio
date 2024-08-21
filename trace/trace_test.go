@@ -8,7 +8,7 @@ import (
 	opentracing "github.com/opentracing/opentracing-go"
 	mocktracer "github.com/opentracing/opentracing-go/mocktracer"
 	zipkin "github.com/openzipkin-contrib/zipkin-go-opentracing"
-	zipkintypes "github.com/openzipkin-contrib/zipkin-go-opentracing/types"
+//	zipkintypes "github.com/openzipkin-contrib/zipkin-go-opentracing/types"
 )
 
 const testServiceName = "TEST-SERVICE"
@@ -100,7 +100,7 @@ func TestInjectHeadersWithParentSpan(t *testing.T) {
 	parentSpanId := uint64(12345)
 	parentSpanContext := zipkin.SpanContext{
 		SpanID:  parentSpanId,
-		TraceID: zipkintypes.TraceID{High: uint64(1234), Low: uint64(4321)},
+		//TraceID: zipkintypes.TraceID{High: uint64(1234), Low: uint64(4321)},
 	}
 
 	tracer, _ := zipkin.NewTracer(nil)
