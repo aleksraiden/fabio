@@ -240,6 +240,8 @@ func UpdatePathAggregator4ByteAs(msg *bgp.BGPUpdate) error {
 			if attr.Value.Askind == reflect.Uint16 {
 				aggAttr = attr
 				aggAttr.Value.Askind = reflect.Uint32
+			} else if attr.Value.Askind == reflect.Uint32 {
+				aggAttr = attr
 			}
 		case *bgp.PathAttributeAs4Aggregator:
 			agg4Attr = agg
@@ -399,11 +401,11 @@ func (p *packerV4) add(path *Path) {
 
 func (p *packerV4) pack(options ...*bgp.MarshallingOption) []*bgp.BGPMessage {
 	split := func(max int, paths []*Path) ([]*bgp.IPAddrPrefix, []*Path) {
-		nlris := make([]*bgp.IPAddrPrefix, 0, max)
-		i := 0
 		if max > len(paths) {
 			max = len(paths)
 		}
+		nlris := make([]*bgp.IPAddrPrefix, 0, max)
+		i := 0
 		for ; i < max; i++ {
 			nlris = append(nlris, paths[i].GetNlri().(*bgp.IPAddrPrefix))
 		}

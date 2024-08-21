@@ -12,8 +12,8 @@
 // implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//go:build !linux && !dragonfly && !freebsd && !netbsd && !openbsd && !darwin
-// +build !linux,!dragonfly,!freebsd,!netbsd,!openbsd,!darwin
+//go:build !linux && !dragonfly && !freebsd && !netbsd && !openbsd && !darwin && !windows
+// +build !linux,!dragonfly,!freebsd,!netbsd,!openbsd,!darwin,!windows
 
 package server
 
@@ -31,5 +31,9 @@ func setTcpTTLSockopt(conn *net.TCPConn, ttl int) error {
 }
 
 func setTcpMinTTLSockopt(conn *net.TCPConn, ttl int) error {
+	return fmt.Errorf("setting min ttl is not supported")
+}
+
+func setTcpMSSSockopt(conn *net.TCPConn, mss uint16) error {
 	return fmt.Errorf("setting min ttl is not supported")
 }

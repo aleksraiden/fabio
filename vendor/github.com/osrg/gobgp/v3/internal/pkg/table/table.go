@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/bits"
 	"net"
+	"strconv"
 	"strings"
 	"unsafe"
 
@@ -38,6 +39,7 @@ const (
 
 type LookupPrefix struct {
 	Prefix string
+	RD     string
 	LookupOption
 }
 
@@ -55,6 +57,10 @@ type Table struct {
 	routeFamily  bgp.RouteFamily
 	destinations map[string]*Destination
 	logger       log.Logger
+	// index of evpn prefixes with paths to a specific MAC in a MAC-VRF
+	// this is a map[rt, MAC address]map[prefix]struct{}
+	// this holds a map for a set of prefixes.
+	macIndex map[string]map[string]struct{}
 }
 
 func NewTable(logger log.Logger, rf bgp.RouteFamily, dsts ...*Destination) *Table {
@@ -62,6 +68,7 @@ func NewTable(logger log.Logger, rf bgp.RouteFamily, dsts ...*Destination) *Tabl
 		routeFamily:  rf,
 		destinations: make(map[string]*Destination),
 		logger:       logger,
+		macIndex:     make(map[string]map[string]struct{}),
 	}
 	for _, dst := range dsts {
 		t.setDestination(dst)
@@ -136,6 +143,22 @@ func (t *Table) deleteDest(dest *Destination) {
 	if len(destinations) == 0 {
 		t.destinations = make(map[string]*Destination)
 	}
+
+	if nlri, ok := dest.nlri.(*bgp.EVPNNLRI); ok {
+		if macadv, ok := nlri.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute); ok {
+			for _, path := range dest.knownPathList {
+				for _, ec := range path.GetRouteTargets() {
+					macKey := t.macKey(ec, macadv.MacAddress)
+					if keys, ok := t.macIndex[macKey]; ok {
+						delete(keys, t.tableKey(nlri))
+						if len(keys) == 0 {
+							delete(t.macIndex, macKey)
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 func (t *Table) validatePath(path *Path) {
@@ -150,7 +173,7 @@ func (t *Table) validatePath(path *Path) {
 			log.Fields{
 				"Topic":      "Table",
 				"Key":        t.routeFamily,
-				"Prefix":     path.GetNlri().String(),
+				"Prefix":     path.GetPrefix(),
 				"ReceivedRf": path.GetRouteFamily().String()})
 	}
 	if attr := path.getPathAttr(bgp.BGP_ATTR_TYPE_AS_PATH); attr != nil {
@@ -194,6 +217,32 @@ func (t *Table) getOrCreateDest(nlri bgp.AddrPrefixInterface, size int) *Destina
 	return dest
 }
 
+func (t *Table) update(newPath *Path) *Update {
+	t.validatePath(newPath)
+	dst := t.getOrCreateDest(newPath.GetNlri(), 64)
+	u := dst.Calculate(t.logger, newPath)
+
+	if len(dst.knownPathList) == 0 {
+		t.deleteDest(dst)
+		return u
+	}
+
+	if nlri, ok := newPath.GetNlri().(*bgp.EVPNNLRI); ok {
+		if macadv, ok := nlri.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute); ok {
+			tableKey := t.tableKey(nlri)
+			for _, ec := range newPath.GetRouteTargets() {
+				macKey := t.macKey(ec, macadv.MacAddress)
+				if _, ok := t.macIndex[macKey]; !ok {
+					t.macIndex[macKey] = make(map[string]struct{})
+				}
+				t.macIndex[macKey][tableKey] = struct{}{}
+			}
+		}
+	}
+
+	return u
+}
+
 func (t *Table) GetDestinations() map[string]*Destination {
 	return t.destinations
 }
@@ -233,6 +282,54 @@ func (t *Table) GetLongerPrefixDestinations(key string) ([]*Destination, error) 
 			mask = 8 - ones&0x7
 			div = ones >> 3
 		}
+		r.WalkPrefix(p, func(n *net.IPNet, v interface{}) bool {
+			if mask != 0 && n.IP[div]>>mask != p.IP[div]>>mask {
+				return true
+			}
+			l, _ := n.Mask.Size()
+
+			if ones > l {
+				return true
+			}
+			results = append(results, v.(*Destination))
+			return true
+		})
+	case bgp.RF_IPv4_VPN, bgp.RF_IPv6_VPN:
+		prefixRd, _, network, err := bgp.ParseVPNPrefix(key)
+		if err != nil {
+			return nil, err
+		}
+		ones, bits := network.Mask.Size()
+
+		r := critbitgo.NewNet()
+		for _, dst := range t.GetDestinations() {
+			var dstRD bgp.RouteDistinguisherInterface
+			switch t.routeFamily {
+			case bgp.RF_IPv4_VPN:
+				dstRD = dst.nlri.(*bgp.LabeledVPNIPAddrPrefix).RD
+			case bgp.RF_IPv6_VPN:
+				dstRD = dst.nlri.(*bgp.LabeledVPNIPv6AddrPrefix).RD
+			}
+
+			if prefixRd.String() != dstRD.String() {
+				continue
+			}
+
+			r.Add(nlriToIPNet(dst.nlri), dst)
+		}
+
+		p := &net.IPNet{
+			IP:   network.IP,
+			Mask: net.CIDRMask((ones>>3)<<3, bits),
+		}
+
+		mask := 0
+		div := 0
+		if ones%8 != 0 {
+			mask = 8 - ones&0x7
+			div = ones >> 3
+		}
+
 		r.WalkPrefix(p, func(n *net.IPNet, v interface{}) bool {
 			if mask != 0 && n.IP[div]>>mask != p.IP[div]>>mask {
 				return true
@@ -288,8 +385,58 @@ func (t *Table) GetEvpnDestinationsWithRouteType(typ string) ([]*Destination, er
 	return results, nil
 }
 
+func (t *Table) GetMUPDestinationsWithRouteType(p string) ([]*Destination, error) {
+	var routeType uint16
+	switch strings.ToLower(p) {
+	case "isd":
+		routeType = bgp.MUP_ROUTE_TYPE_INTERWORK_SEGMENT_DISCOVERY
+	case "dsd":
+		routeType = bgp.MUP_ROUTE_TYPE_DIRECT_SEGMENT_DISCOVERY
+	case "t1st":
+		routeType = bgp.MUP_ROUTE_TYPE_TYPE_1_SESSION_TRANSFORMED
+	case "t2st":
+		routeType = bgp.MUP_ROUTE_TYPE_TYPE_2_SESSION_TRANSFORMED
+	default:
+		// use prefix as route key
+	}
+	destinations := t.GetDestinations()
+	results := make([]*Destination, 0, len(destinations))
+	switch t.routeFamily {
+	case bgp.RF_MUP_IPv4, bgp.RF_MUP_IPv6:
+		for _, dst := range destinations {
+			if nlri, ok := dst.nlri.(*bgp.MUPNLRI); !ok {
+				return nil, fmt.Errorf("invalid mup nlri type detected: %T", dst.nlri)
+			} else if nlri.RouteType == routeType {
+				results = append(results, dst)
+			} else if nlri.String() == p {
+				results = append(results, dst)
+			}
+		}
+	default:
+		for _, dst := range destinations {
+			results = append(results, dst)
+		}
+	}
+	return results, nil
+}
+
 func (t *Table) setDestination(dst *Destination) {
-	t.destinations[t.tableKey(dst.nlri)] = dst
+	tableKey := t.tableKey(dst.nlri)
+	t.destinations[tableKey] = dst
+
+	if nlri, ok := dst.nlri.(*bgp.EVPNNLRI); ok {
+		if macadv, ok := nlri.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute); ok {
+			for _, path := range dst.knownPathList {
+				for _, ec := range path.GetRouteTargets() {
+					macKey := t.macKey(ec, macadv.MacAddress)
+					if _, ok := t.macIndex[macKey]; !ok {
+						t.macIndex[macKey] = make(map[string]struct{})
+					}
+					t.macIndex[macKey][tableKey] = struct{}{}
+				}
+			}
+		}
+	}
 }
 
 func (t *Table) tableKey(nlri bgp.AddrPrefixInterface) string {
@@ -304,8 +451,28 @@ func (t *Table) tableKey(nlri bgp.AddrPrefixInterface) string {
 		copy(b, T.Prefix.To16())
 		b[16] = T.Length
 		return *(*string)(unsafe.Pointer(&b))
+	case *bgp.LabeledVPNIPAddrPrefix:
+		b := make([]byte, 13)
+		serializedRD, _ := T.RD.Serialize()
+		copy(b, serializedRD)
+		copy(b[8:12], T.Prefix.To4())
+		b[12] = T.Length
+		return *(*string)(unsafe.Pointer(&b))
+	case *bgp.LabeledVPNIPv6AddrPrefix:
+		b := make([]byte, 25)
+		serializedRD, _ := T.RD.Serialize()
+		copy(b, serializedRD)
+		copy(b[8:24], T.Prefix.To16())
+		b[24] = T.Length
+		return *(*string)(unsafe.Pointer(&b))
 	}
 	return nlri.String()
+}
+
+func (t *Table) macKey(rt bgp.ExtendedCommunityInterface, mac net.HardwareAddr) string {
+	b, _ := rt.Serialize()
+	b = append(b, mac...)
+	return *(*string)(unsafe.Pointer(&b))
 }
 
 func (t *Table) Bests(id string, as uint32) []*Path {
@@ -338,6 +505,22 @@ func (t *Table) GetKnownPathList(id string, as uint32) []*Path {
 	return paths
 }
 
+func (t *Table) GetKnownPathListWithMac(id string, as uint32, rt bgp.ExtendedCommunityInterface, mac net.HardwareAddr, onlyBest bool) []*Path {
+	var paths []*Path
+	if prefixes, ok := t.macIndex[t.macKey(rt, mac)]; ok {
+		for prefix := range prefixes {
+			if dst, ok := t.destinations[prefix]; ok {
+				if onlyBest {
+					paths = append(paths, dst.GetBestPath(id, as))
+				} else {
+					paths = append(paths, dst.GetKnownPathList(id, as)...)
+				}
+			}
+		}
+	}
+	return paths
+}
+
 func (t *Table) Select(option ...TableSelectOption) (*Table, error) {
 	id := GLOBAL_RIB_NAME
 	var vrf *Vrf
@@ -363,25 +546,30 @@ func (t *Table) Select(option ...TableSelectOption) (*Table, error) {
 	r := &Table{
 		routeFamily:  t.routeFamily,
 		destinations: make(map[string]*Destination),
+		macIndex:     make(map[string]map[string]struct{}),
 	}
 
 	if len(prefixes) != 0 {
 		switch t.routeFamily {
 		case bgp.RF_IPv4_UC, bgp.RF_IPv6_UC:
-			f := func(prefixStr string) bool {
+			f := func(prefixStr string) (bool, error) {
 				var nlri bgp.AddrPrefixInterface
+				var err error
 				if t.routeFamily == bgp.RF_IPv4_UC {
-					nlri, _ = bgp.NewPrefixFromRouteFamily(bgp.AFI_IP, bgp.SAFI_UNICAST, prefixStr)
+					nlri, err = bgp.NewPrefixFromRouteFamily(bgp.AFI_IP, bgp.SAFI_UNICAST, prefixStr)
 				} else {
-					nlri, _ = bgp.NewPrefixFromRouteFamily(bgp.AFI_IP6, bgp.SAFI_UNICAST, prefixStr)
+					nlri, err = bgp.NewPrefixFromRouteFamily(bgp.AFI_IP6, bgp.SAFI_UNICAST, prefixStr)
+				}
+				if err != nil {
+					return false, err
 				}
 				if dst := t.GetDestination(nlri); dst != nil {
 					if d := dst.Select(dOption); d != nil {
 						r.setDestination(d)
-						return true
+						return true, nil
 					}
 				}
-				return false
+				return false, nil
 			}
 
 			for _, p := range prefixes {
@@ -418,7 +606,11 @@ func (t *Table) Select(option ...TableSelectOption) (*Table, error) {
 							if err != nil {
 								return nil, err
 							}
-							if f(prefix.String()) {
+							ret, err := f(prefix.String())
+							if err != nil {
+								return nil, err
+							}
+							if ret {
 								break
 							}
 						}
@@ -427,10 +619,124 @@ func (t *Table) Select(option ...TableSelectOption) (*Table, error) {
 					}
 				}
 			}
+		case bgp.RF_IPv4_VPN, bgp.RF_IPv6_VPN:
+			f := func(prefixStr string) error {
+				var nlri bgp.AddrPrefixInterface
+				var err error
+
+				if t.routeFamily == bgp.RF_IPv4_VPN {
+					nlri, err = bgp.NewPrefixFromRouteFamily(bgp.AFI_IP, bgp.SAFI_MPLS_VPN, prefixStr)
+				} else {
+					nlri, err = bgp.NewPrefixFromRouteFamily(bgp.AFI_IP6, bgp.SAFI_MPLS_VPN, prefixStr)
+				}
+				if err != nil {
+					return fmt.Errorf("failed to create prefix: %w", err)
+				}
+
+				if dst := t.GetDestination(nlri); dst != nil {
+					if d := dst.Select(dOption); d != nil {
+						r.setDestination(d)
+					}
+				}
+				return nil
+			}
+
+			for _, p := range prefixes {
+				switch p.LookupOption {
+				case LOOKUP_LONGER:
+					_, prefix, err := net.ParseCIDR(p.Prefix)
+					if err != nil {
+						return nil, err
+					}
+
+					if p.RD == "" {
+						for _, dst := range t.GetDestinations() {
+							tablePrefix := nlriToIPNet(dst.nlri)
+
+							if bgp.ContainsCIDR(prefix, tablePrefix) {
+								r.setDestination(dst)
+							}
+						}
+
+						return r, nil
+					}
+
+					ds, err := t.GetLongerPrefixDestinations(p.RD + ":" + p.Prefix)
+					if err != nil {
+						return nil, err
+					}
+
+					for _, dst := range ds {
+						if d := dst.Select(dOption); d != nil {
+							r.setDestination(d)
+						}
+					}
+				case LOOKUP_SHORTER:
+					addr, prefix, err := net.ParseCIDR(p.Prefix)
+					if err != nil {
+						return nil, err
+					}
+
+					if p.RD == "" {
+						for _, dst := range t.GetDestinations() {
+							tablePrefix := nlriToIPNet(dst.nlri)
+
+							if bgp.ContainsCIDR(tablePrefix, prefix) {
+								r.setDestination(dst)
+							}
+						}
+
+						return r, nil
+					}
+
+					rd, err := bgp.ParseRouteDistinguisher(p.RD)
+					if err != nil {
+						return nil, err
+					}
+
+					ones, _ := prefix.Mask.Size()
+					for i := ones; i >= 0; i-- {
+						_, prefix, _ := net.ParseCIDR(addr.String() + "/" + strconv.Itoa(i))
+
+						err := f(rd.String() + ":" + prefix.String())
+						if err != nil {
+							return nil, err
+						}
+					}
+				default:
+					if p.RD == "" {
+						for _, dst := range t.GetDestinations() {
+							net := nlriToIPNet(dst.nlri)
+							if net.String() == p.Prefix {
+								r.setDestination(dst)
+							}
+						}
+
+						return r, nil
+					}
+
+					err := f(p.RD + ":" + p.Prefix)
+					if err != nil {
+						return nil, err
+					}
+				}
+			}
 		case bgp.RF_EVPN:
 			for _, p := range prefixes {
 				// Uses LookupPrefix.Prefix as EVPN Route Type string
 				ds, err := t.GetEvpnDestinationsWithRouteType(p.Prefix)
+				if err != nil {
+					return nil, err
+				}
+				for _, dst := range ds {
+					if d := dst.Select(dOption); d != nil {
+						r.setDestination(d)
+					}
+				}
+			}
+		case bgp.RF_MUP_IPv4, bgp.RF_MUP_IPv6:
+			for _, p := range prefixes {
+				ds, err := t.GetMUPDestinationsWithRouteType(p.Prefix)
 				if err != nil {
 					return nil, err
 				}

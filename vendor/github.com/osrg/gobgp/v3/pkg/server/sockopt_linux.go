@@ -18,59 +18,76 @@
 package server
 
 import (
+	"fmt"
 	"net"
 	"os"
+	"strings"
 	"syscall"
-	"unsafe"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/osrg/gobgp/v3/pkg/log"
 )
 
 const (
-	tcpMD5SIG       = 14 // TCP MD5 Signature (RFC2385)
 	ipv6MinHopCount = 73 // Generalized TTL Security Mechanism (RFC5082)
 )
 
-type tcpmd5sig struct {
-	ss_family uint16
-	ss        [126]byte
-	// padding the struct
-	_      uint16
-	keylen uint16
-	// padding the struct
-	_   uint32
-	key [80]byte
-}
+func buildTcpMD5Sig(address, key string) *unix.TCPMD5Sig {
+	t := unix.TCPMD5Sig{}
 
-func buildTcpMD5Sig(address, key string) (tcpmd5sig, error) {
-	t := tcpmd5sig{}
-	addr := net.ParseIP(address)
-	if addr.To4() != nil {
-		t.ss_family = syscall.AF_INET
-		copy(t.ss[2:], addr.To4())
+	var addr net.IP
+	if strings.Contains(address, "/") {
+		var err error
+		var ipnet *net.IPNet
+		addr, ipnet, err = net.ParseCIDR(address)
+		if err != nil {
+			return nil
+		}
+		prefixlen, _ := ipnet.Mask.Size()
+		t.Prefixlen = uint8(prefixlen)
+		t.Flags = unix.TCP_MD5SIG_FLAG_PREFIX
 	} else {
-		t.ss_family = syscall.AF_INET6
-		copy(t.ss[6:], addr.To16())
+		addr = net.ParseIP(address)
 	}
 
-	t.keylen = uint16(len(key))
-	copy(t.key[0:], []byte(key))
+	if addr.To4() != nil {
+		t.Addr.Family = unix.AF_INET
+		copy(t.Addr.Data[2:], addr.To4())
+	} else {
+		t.Addr.Family = unix.AF_INET6
+		copy(t.Addr.Data[6:], addr.To16())
+	}
 
-	return t, nil
+	t.Keylen = uint16(len(key))
+	copy(t.Key[0:], []byte(key))
+
+	return &t
 }
 
 func setTCPMD5SigSockopt(l *net.TCPListener, address string, key string) error {
-	t, err := buildTcpMD5Sig(address, key)
-	if err != nil {
-		return err
-	}
-	b := *(*[unsafe.Sizeof(t)]byte)(unsafe.Pointer(&t))
-
 	sc, err := l.SyscallConn()
 	if err != nil {
 		return err
 	}
-	return setsockOptString(sc, syscall.IPPROTO_TCP, tcpMD5SIG, string(b[:]))
+
+	var sockerr error
+	t := buildTcpMD5Sig(address, key)
+	if t == nil {
+		return fmt.Errorf("unable to generate TcpMD5Sig from %s", address)
+	}
+	if err := sc.Control(func(s uintptr) {
+		opt := unix.TCP_MD5SIG
+
+		if t.Prefixlen != 0 {
+			opt = unix.TCP_MD5SIG_EXT
+		}
+
+		sockerr = unix.SetsockoptTCPMD5Sig(int(s), unix.IPPROTO_TCP, opt, t)
+	}); err != nil {
+		return err
+	}
+	return sockerr
 }
 
 func setBindToDevSockopt(sc syscall.RawConn, device string) error {
@@ -101,7 +118,16 @@ func setTCPMinTTLSockopt(conn *net.TCPConn, ttl int) error {
 	return setsockOptInt(sc, level, name, ttl)
 }
 
-func dialerControl(logger log.Logger, network, address string, c syscall.RawConn, ttl, minTtl uint8, password string, bindInterface string) error {
+func setTCPMSSSockopt(conn *net.TCPConn, mss uint16) error {
+	family := extractFamilyFromTCPConn(conn)
+	sc, err := conn.SyscallConn()
+	if err != nil {
+		return err
+	}
+	return setsockoptTcpMss(sc, family, mss)
+}
+
+func dialerControl(logger log.Logger, network, address string, c syscall.RawConn, ttl, minTtl uint8, mss uint16, password string, bindInterface string) error {
 	family := syscall.AF_INET
 	raddr, _ := net.ResolveTCPAddr("tcp", address)
 	if raddr.IP.To4() == nil {
@@ -111,13 +137,9 @@ func dialerControl(logger log.Logger, network, address string, c syscall.RawConn
 	var sockerr error
 	if password != "" {
 		addr, _, _ := net.SplitHostPort(address)
-		t, err := buildTcpMD5Sig(addr, password)
-		if err != nil {
-			return err
-		}
-		b := *(*[unsafe.Sizeof(t)]byte)(unsafe.Pointer(&t))
+		t := buildTcpMD5Sig(addr, password)
 		if err := c.Control(func(fd uintptr) {
-			sockerr = os.NewSyscallError("setsockopt", syscall.SetsockoptString(int(fd), syscall.IPPROTO_TCP, tcpMD5SIG, string(b[:])))
+			sockerr = os.NewSyscallError("setsockopt", unix.SetsockoptTCPMD5Sig(int(fd), unix.IPPROTO_TCP, unix.TCP_MD5SIG, t))
 		}); err != nil {
 			return err
 		}
@@ -159,6 +181,20 @@ func dialerControl(logger log.Logger, network, address string, c syscall.RawConn
 			return sockerr
 		}
 	}
+
+	if mss != 0 {
+		if err := c.Control(func(fd uintptr) {
+			level := syscall.IPPROTO_TCP
+			name := syscall.TCP_MAXSEG
+			sockerr = os.NewSyscallError("setsockopt", syscall.SetsockoptInt(int(fd), level, name, int(mss)))
+		}); err != nil {
+			return err
+		}
+		if sockerr != nil {
+			return sockerr
+		}
+	}
+
 	if bindInterface != "" {
 		if err := setBindToDevSockopt(c, bindInterface); err != nil {
 			return err

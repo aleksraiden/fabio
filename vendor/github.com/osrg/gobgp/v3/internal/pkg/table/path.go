@@ -24,7 +24,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/osrg/gobgp/v3/internal/pkg/config"
+	"github.com/osrg/gobgp/v3/pkg/config/oc"
 	"github.com/osrg/gobgp/v3/pkg/log"
 	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
 )
@@ -121,7 +121,7 @@ var IntToRpkiValidationReasonTypeMap = map[int]RpkiValidationReasonType{
 }
 
 type Validation struct {
-	Status          config.RpkiValidationResultType
+	Status          oc.RpkiValidationResultType
 	Reason          RpkiValidationReasonType
 	Matched         []*ROA
 	UnmatchedAs     []*ROA
@@ -141,6 +141,30 @@ type Path struct {
 	// For BGP Nexthop Tracking, this field shows if nexthop is invalidated by IGP.
 	IsNexthopInvalid bool
 	IsWithdraw       bool
+}
+
+type FilteredType uint8
+
+const (
+	NotFiltered FilteredType = 1 << iota
+	PolicyFiltered
+	SendMaxFiltered
+)
+
+type PathDestLocalKey struct {
+	Family bgp.RouteFamily
+	Prefix string
+}
+type PathLocalKey struct {
+	PathDestLocalKey
+	Id uint32
+}
+
+func NewPathDestLocalKey(f bgp.RouteFamily, destPrefix string) *PathDestLocalKey {
+	return &PathDestLocalKey{
+		Family: f,
+		Prefix: destPrefix,
+	}
 }
 
 var localSource = &PeerInfo{}
@@ -194,7 +218,7 @@ func cloneAsPath(asAttr *bgp.PathAttributeAsPath) *bgp.PathAttributeAsPath {
 	return bgp.NewPathAttributeAsPath(newASparams)
 }
 
-func UpdatePathAttrs(logger log.Logger, global *config.Global, peer *config.Neighbor, info *PeerInfo, original *Path) *Path {
+func UpdatePathAttrs(logger log.Logger, global *oc.Global, peer *oc.Neighbor, info *PeerInfo, original *Path) *Path {
 	if peer.RouteServer.Config.RouteServerClient {
 		return original
 	}
@@ -208,7 +232,7 @@ func UpdatePathAttrs(logger log.Logger, global *config.Global, peer *config.Neig
 		} else {
 			switch a.GetType() {
 			case bgp.BGP_ATTR_TYPE_CLUSTER_LIST, bgp.BGP_ATTR_TYPE_ORIGINATOR_ID:
-				if !(peer.State.PeerType == config.PEER_TYPE_INTERNAL && peer.RouteReflector.Config.RouteReflectorClient) {
+				if !(peer.State.PeerType == oc.PEER_TYPE_INTERNAL && peer.RouteReflector.Config.RouteReflectorClient) {
 					// send these attributes to only rr clients
 					path.delPathAttr(a.GetType())
 				}
@@ -218,7 +242,7 @@ func UpdatePathAttrs(logger log.Logger, global *config.Global, peer *config.Neig
 
 	localAddress := info.LocalAddress
 	nexthop := path.GetNexthop()
-	if peer.State.PeerType == config.PEER_TYPE_EXTERNAL {
+	if peer.State.PeerType == oc.PEER_TYPE_EXTERNAL {
 		// NEXTHOP handling
 		if !path.IsLocal() || nexthop.IsUnspecified() {
 			path.SetNexthop(localAddress)
@@ -239,7 +263,7 @@ func UpdatePathAttrs(logger log.Logger, global *config.Global, peer *config.Neig
 			path.delPathAttr(bgp.BGP_ATTR_TYPE_MULTI_EXIT_DISC)
 		}
 
-	} else if peer.State.PeerType == config.PEER_TYPE_INTERNAL {
+	} else if peer.State.PeerType == oc.PEER_TYPE_INTERNAL {
 		// NEXTHOP handling for iBGP
 		// if the path generated locally set local address as nexthop.
 		// if not, don't modify it.
@@ -566,7 +590,7 @@ func (path *Path) String() string {
 		s.WriteString(fmt.Sprintf("{ %s EOR | src: %s }", path.GetRouteFamily(), path.GetSource()))
 		return s.String()
 	}
-	s.WriteString(fmt.Sprintf("{ %s | ", path.getPrefix()))
+	s.WriteString(fmt.Sprintf("{ %s | ", path.GetPrefix()))
 	s.WriteString(fmt.Sprintf("src: %s", path.GetSource()))
 	s.WriteString(fmt.Sprintf(", nh: %s", path.GetNexthop()))
 	if path.IsNexthopInvalid {
@@ -579,7 +603,23 @@ func (path *Path) String() string {
 	return s.String()
 }
 
-func (path *Path) getPrefix() string {
+// GetLocalKey identifies the path in the local BGP server.
+func (path *Path) GetLocalKey() PathLocalKey {
+	return PathLocalKey{
+		PathDestLocalKey: path.GetDestLocalKey(),
+		Id:               path.GetNlri().PathLocalIdentifier(),
+	}
+}
+
+// GetDestLocalKey identifies the path destination in the local BGP server.
+func (path *Path) GetDestLocalKey() PathDestLocalKey {
+	return PathDestLocalKey{
+		Family: path.GetRouteFamily(),
+		Prefix: path.GetNlri().String(),
+	}
+}
+
+func (path *Path) GetPrefix() string {
 	return path.GetNlri().String()
 }
 
@@ -618,7 +658,6 @@ func (path *Path) GetAsList() []uint32 {
 
 func (path *Path) GetAsSeqList() []uint32 {
 	return path.getAsListOfSpecificType(true, false)
-
 }
 
 func (path *Path) getAsListOfSpecificType(getAsSeq, getAsSet bool) []uint32 {
@@ -713,20 +752,20 @@ func isPrivateAS(as uint32) bool {
 	return (64512 <= as && as <= 65534) || (4200000000 <= as && as <= 4294967294)
 }
 
-func (path *Path) RemovePrivateAS(localAS uint32, option config.RemovePrivateAsOption) {
+func (path *Path) RemovePrivateAS(localAS uint32, option oc.RemovePrivateAsOption) {
 	original := path.GetAsPath()
 	if original == nil {
 		return
 	}
 	switch option {
-	case config.REMOVE_PRIVATE_AS_OPTION_ALL, config.REMOVE_PRIVATE_AS_OPTION_REPLACE:
+	case oc.REMOVE_PRIVATE_AS_OPTION_ALL, oc.REMOVE_PRIVATE_AS_OPTION_REPLACE:
 		newASParams := make([]bgp.AsPathParamInterface, 0, len(original.Value))
 		for _, param := range original.Value {
 			asList := param.GetAS()
 			newASParam := make([]uint32, 0, len(asList))
 			for _, as := range asList {
 				if isPrivateAS(as) {
-					if option == config.REMOVE_PRIVATE_AS_OPTION_REPLACE {
+					if option == oc.REMOVE_PRIVATE_AS_OPTION_REPLACE {
 						newASParam = append(newASParam, localAS)
 					}
 				} else {
@@ -883,6 +922,16 @@ func (path *Path) SetExtCommunities(exts []bgp.ExtendedCommunityInterface, doRep
 	} else {
 		path.setPathAttr(bgp.NewPathAttributeExtendedCommunities(exts))
 	}
+}
+
+func (path *Path) GetRouteTargets() []bgp.ExtendedCommunityInterface {
+	rts := make([]bgp.ExtendedCommunityInterface, 0)
+	for _, ec := range path.GetExtCommunities() {
+		if t, st := ec.GetTypes(); t <= bgp.EC_TYPE_TRANSITIVE_FOUR_OCTET_AS_SPECIFIC && st == bgp.EC_SUBTYPE_ROUTE_TARGET {
+			rts = append(rts, ec)
+		}
+	}
+	return rts
 }
 
 func (path *Path) GetLargeCommunities() []*bgp.LargeCommunity {
@@ -1164,10 +1213,10 @@ func (p *Path) ToGlobal(vrf *Vrf) *Path {
 			nlri = bgp.NewMUPDirectSegmentDiscoveryRoute(vrf.Rd, old.Address)
 		case bgp.MUP_ROUTE_TYPE_TYPE_1_SESSION_TRANSFORMED:
 			old := n.RouteTypeData.(*bgp.MUPType1SessionTransformedRoute)
-			nlri = bgp.NewMUPType1SessionTransformedRoute(vrf.Rd, old.Prefix, old.TEID, old.QFI, old.EndpointAddress)
+			nlri = bgp.NewMUPType1SessionTransformedRoute(vrf.Rd, old.Prefix, old.TEID, old.QFI, old.EndpointAddress, old.SourceAddress)
 		case bgp.MUP_ROUTE_TYPE_TYPE_2_SESSION_TRANSFORMED:
 			old := n.RouteTypeData.(*bgp.MUPType2SessionTransformedRoute)
-			nlri = bgp.NewMUPType2SessionTransformedRoute(vrf.Rd, old.EndpointAddress, old.TEID)
+			nlri = bgp.NewMUPType2SessionTransformedRoute(vrf.Rd, old.EndpointAddressLength, old.EndpointAddress, old.TEID)
 		}
 	default:
 		return p
@@ -1244,6 +1293,12 @@ func (p *Path) SetHash(v uint32) {
 
 func (p *Path) GetHash() uint32 {
 	return p.attrsHash
+}
+
+func (p *Path) SetSource(peerInfo *PeerInfo) {
+	if p.info != nil {
+		p.info.source = peerInfo
+	}
 }
 
 func nlriToIPNet(nlri bgp.AddrPrefixInterface) *net.IPNet {

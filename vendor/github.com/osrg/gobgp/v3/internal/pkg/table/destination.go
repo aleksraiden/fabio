@@ -23,13 +23,13 @@ import (
 	"net"
 	"sort"
 
-	"github.com/osrg/gobgp/v3/internal/pkg/config"
+	"github.com/osrg/gobgp/v3/pkg/config/oc"
 	"github.com/osrg/gobgp/v3/pkg/log"
 	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
 )
 
-var SelectionOptions config.RouteSelectionOptionsConfig
-var UseMultiplePaths config.UseMultiplePathsConfig
+var SelectionOptions oc.RouteSelectionOptionsConfig
+var UseMultiplePaths oc.UseMultiplePathsConfig
 
 type BestPathReason uint8
 
@@ -118,7 +118,7 @@ func (i *PeerInfo) String() string {
 	return s.String()
 }
 
-func NewPeerInfo(g *config.Global, p *config.Neighbor) *PeerInfo {
+func NewPeerInfo(g *oc.Global, p *oc.Neighbor) *PeerInfo {
 	clusterID := net.ParseIP(string(p.RouteReflector.State.RouteReflectorClusterId)).To4()
 	// exclude zone info
 	naddr, _ := net.ResolveIPAddr("ip", p.State.NeighborAddress)
@@ -185,10 +185,7 @@ func rsFilter(id string, as uint32, path *Path) bool {
 		return false
 	}
 
-	if id != GLOBAL_RIB_NAME && (path.GetSource().Address.String() == id || isASLoop(as, path)) {
-		return true
-	}
-	return false
+	return id != GLOBAL_RIB_NAME && (path.GetSource().Address.String() == id || isASLoop(as, path))
 }
 
 func (dd *Destination) GetKnownPathList(id string, as uint32) []*Path {
@@ -273,10 +270,12 @@ func (dest *Destination) Calculate(logger log.Logger, newPath *Path) *Update {
 // we can receive withdraws for such paths and withdrawals may not be
 // stopped by the same policies.
 func (dest *Destination) explicitWithdraw(logger log.Logger, withdraw *Path) *Path {
-	logger.Debug("Removing withdrawals",
-		log.Fields{
-			"Topic": "Table",
-			"Key":   dest.GetNlri().String()})
+	if logger.GetLevel() >= log.DebugLevel {
+		logger.Debug("Removing withdrawals",
+			log.Fields{
+				"Topic": "Table",
+				"Key":   dest.GetNlri().String()})
+	}
 
 	// If we have some withdrawals and no know-paths, it means it is safe to
 	// delete these withdraws.
@@ -328,11 +327,13 @@ func (dest *Destination) implicitWithdraw(logger log.Logger, newPath *Path) {
 		// paths and when doing RouteRefresh (not EnhancedRouteRefresh)
 		// we get same paths again.
 		if newPath.GetSource().Equal(path.GetSource()) && newPath.GetNlri().PathIdentifier() == path.GetNlri().PathIdentifier() {
-			logger.Debug("Implicit withdrawal of old path, since we have learned new path from the same peer",
-				log.Fields{
-					"Topic": "Table",
-					"Key":   dest.GetNlri().String(),
-					"Path":  path})
+			if logger.GetLevel() >= log.DebugLevel {
+				logger.Debug("Implicit withdrawal of old path, since we have learned new path from the same peer",
+					log.Fields{
+						"Topic": "Table",
+						"Key":   dest.GetNlri().String(),
+						"Path":  path})
+			}
 
 			found = i
 			newPath.GetNlri().SetPathLocalIdentifier(path.GetNlri().PathLocalIdentifier())
