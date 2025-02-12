@@ -519,7 +519,7 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
-			args: []string{"-proxy.log.routes", "foobar"},
+			args: []string{"-log.routes.format", "foobar"},
 			cfg: func(cfg *Config) *Config {
 				cfg.Log.RoutesFormat = "foobar"
 				return cfg
