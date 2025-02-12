@@ -5,7 +5,7 @@ go 1.23.3
 toolchain go1.23.4
 
 require (
-	github.com/armon/go-proxyproto v0.1.0
+	github.com/armon/go-proxyproto v0.0.0-20210323213023-7e956b284f0a
 	github.com/circonus-labs/circonus-gometrics/v3 v3.4.7
 	github.com/go-kit/kit v0.13.0
 	github.com/go-kit/log v0.2.1
