@@ -21,10 +21,10 @@ GOVERSION ?= $(shell go version | awk '{print $$3;}')
 GORELEASER ?= $(shell which goreleaser)
 
 # pin versions for CI builds
-CI_CONSUL_VERSION ?= 1.19.2
-CI_VAULT_VERSION ?= 1.17.5
-CI_HUGO_VERSION ?= 0.101.0
-CI_GOBGP_VERSION ?= 3.29.0
+CI_CONSUL_VERSION ?= 1.20.2
+CI_VAULT_VERSION ?= 1.18.4
+CI_HUGO_VERSION ?= 0.142.0
+CI_GOBGP_VERSION ?= 3.33.0
 
 BETA_OSES = linux darwin
 
@@ -185,7 +185,7 @@ github-pages:
 	mkdir -p ~/bin
 	tar -C ~/bin -zxf ~/hugo.tgz hugo
 	hugo version
-	(cd docs && hugo --verbose)
+	(cd docs && hugo)
 
 # clean-adm cleans up all downloaded assets in admin/ui
 .PHONY: clean-adm
