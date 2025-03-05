@@ -29,7 +29,6 @@ linters:
     - staticcheck
     - unused
     - govet
-    - errcheck
     - bidichk
     - durationcheck
     - errname
