@@ -27,3 +27,6 @@ linters:
     - gosimple
     - ineffassign
     - staticcheck
+    - unused
+    - govet
+    - errcheck
