@@ -24,3 +24,4 @@ linters:
   disable-all: true
   enable:
     - asciicheck
+    - gosimple
