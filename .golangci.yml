@@ -30,3 +30,11 @@ linters:
     - unused
     - govet
     - errcheck
+    - bidichk
+    - durationcheck
+    - errname
+    - errorlint
+    - err113
+    - exptostd
+    - goconst
+    - unparam
