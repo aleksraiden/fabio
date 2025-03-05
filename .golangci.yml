@@ -26,3 +26,4 @@ linters:
     - asciicheck
     - gosimple
     - ineffassign
+    - staticcheck
