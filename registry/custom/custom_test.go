@@ -43,8 +43,6 @@ func TestCustomRoutes(t *testing.T) {
 		t.FailNow()
 	}
 
-	return
-
 }
 
 func handleTest(w http.ResponseWriter, r *http.Request) {
