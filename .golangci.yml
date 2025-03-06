@@ -33,8 +33,9 @@ linters:
     - durationcheck
     - errname
     - errorlint
-    - err113
     - exptostd    
     - unparam
   disable:
     - goconst
+    - err113
+linters-settings:

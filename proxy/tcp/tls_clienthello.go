@@ -87,19 +87,19 @@ type clientHelloMsg struct {
 	vers               uint16
 	random             []byte
 	sessionId          []byte
-	cipherSuites       []uint16
+	// cipherSuites       []uint16
 	compressionMethods []uint8
 	nextProtoNeg       bool
 	serverName         string
 	ocspStapling       bool
 	scts               bool
 	// supportedCurves              []CurveID
-	supportedPoints []uint8
+	// supportedPoints []uint8
 	ticketSupported bool
 	sessionTicket   []uint8
 	//signatureAndHashes           []signatureAndHash
-	secureRenegotiation          []byte
-	secureRenegotiationSupported bool
+	// secureRenegotiation          []byte
+	// secureRenegotiationSupported bool
 	alpnProtocols                []string
 }
 

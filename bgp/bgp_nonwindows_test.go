@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"errors"
 	"time"
 )
 
@@ -73,7 +74,7 @@ func TestBGPHandler(t *testing.T) {
 	}
 
 	<-ctx.Done()
-	if ctx.Err() == context.DeadlineExceeded {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) { 
 		t.Fatal("context deadline exceeded")
 	}
 
