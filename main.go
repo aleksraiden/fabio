@@ -145,10 +145,10 @@ func main() {
 
 	startAdmin(cfg)
 
-	go watchNoRouteHTML(cfg)
+	go watchNoRouteHTML()
 
 	first := make(chan bool)
-	go watchBackend(cfg, metrics, first)
+	go watchBackend(cfg, first)
 	log.Print("[INFO] Waiting for first routing table")
 	<-first
 
@@ -571,7 +571,7 @@ func initBackend(cfg *config.Config) {
 	}
 }
 
-func watchBackend(cfg *config.Config, p metrics.Provider, first chan bool) {
+func watchBackend(cfg *config.Config, first chan bool) {
 	var (
 		nextTable   string
 		lastTable   string
@@ -632,7 +632,7 @@ func watchBackend(cfg *config.Config, p metrics.Provider, first chan bool) {
 	}
 }
 
-func watchNoRouteHTML(cfg *config.Config) {
+func watchNoRouteHTML() {
 	html := registry.Default.WatchNoRouteHTML()
 	for {
 		next := <-html
