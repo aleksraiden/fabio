@@ -38,4 +38,4 @@ linters:
   disable:
     - goconst
     - err113
-linters-settings:
+#linters-settings:
