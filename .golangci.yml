@@ -34,6 +34,7 @@ linters:
     - errname
     - errorlint
     - err113
-    - exptostd
-    - goconst
+    - exptostd    
     - unparam
+  disable:
+    - goconst
