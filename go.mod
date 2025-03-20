@@ -3,7 +3,7 @@ module github.com/fabiolb/fabio
 go 1.24.0
 
 require (
-	github.com/armon/go-proxyproto v0.0.0-20180202201750-5b7edb60ff5f
+	github.com/armon/go-proxyproto v0.0.0-20210323213023-7e956b284f0a
 	github.com/circonus-labs/circonus-gometrics/v3 v3.4.7
 	github.com/go-kit/kit v0.13.0
 	github.com/go-kit/log v0.2.1
@@ -12,7 +12,7 @@ require (
 	github.com/hashicorp/go-sockaddr v1.0.7
 	github.com/hashicorp/vault/api v1.16.0
 	github.com/hashicorp/vault/sdk v0.15.2
-	github.com/inetaf/tcpproxy v0.0.0-20200125044825-b6bb9b5b8252
+	github.com/inetaf/tcpproxy v0.0.0-20250222171855-c4b9df066048
 	github.com/magiconair/properties v1.8.9
 	github.com/mwitkow/grpc-proxy v0.0.0-20230212185441-f345521cb9c9
 	github.com/osrg/gobgp/v3 v3.35.0
