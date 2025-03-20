@@ -434,7 +434,7 @@ func (t Table) LookupHost(host string, pick picker) *Target {
 	return t.lookup(host, "/", pick, prefixMatcher)
 }
 
-func (t Table) lookup(host, path, pick picker, match matcher) *Target {
+func (t Table) lookup(host, path string, pick picker, match matcher) *Target {
 	host = strings.ToLower(host) // routes are always added lowercase
 	for _, r := range t[host] {
 		if match(path, r) {
