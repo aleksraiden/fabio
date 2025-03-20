@@ -12,7 +12,7 @@ require (
 	github.com/hashicorp/go-sockaddr v1.0.7
 	github.com/hashicorp/vault/api v1.16.0
 	github.com/hashicorp/vault/sdk v0.15.2
-	github.com/inetaf/tcpproxy v0.0.0-20250222171855-c4b9df066048
+	github.com/inetaf/tcpproxy v0.0.0-20200125044825-b6bb9b5b8252
 	github.com/magiconair/properties v1.8.9
 	github.com/mwitkow/grpc-proxy v0.0.0-20230212185441-f345521cb9c9
 	github.com/osrg/gobgp/v3 v3.35.0
