@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/textproto"
 	"strings"
 
 	"github.com/fabiolb/fabio/config"
@@ -26,6 +27,16 @@ func addResponseHeaders(w http.ResponseWriter, r *http.Request, cfg config.Proxy
 	return nil
 }
 
+var protectHeaders = map[string]bool{
+	"Forwarded":          true,
+	"X-Forwarded-For":    true,
+	"X-Forwarded-Host":   true,
+	"X-Forwarded-Port":   true,
+	"X-Forwarded-Proto":  true,
+	"X-Forwarded-Prefix": true,
+	"X-Real-Ip":          true,
+}
+
 // addHeaders adds/updates headers in request
 //
 // * add/update `Forwarded` header
@@ -37,6 +48,22 @@ func addHeaders(r *http.Request, cfg config.Proxy, stripPath string) error {
 	remoteIP, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return errors.New("cannot parse " + r.RemoteAddr)
+	}
+
+	// exclude headers from Connection rules.
+	var conHeaders []string
+	for _, s := range r.Header.Values("Connection") {
+		for _, p := range strings.Split(s, ",") {
+			p = strings.TrimSpace(p)
+			if !protectHeaders[textproto.CanonicalMIMEHeaderKey(p)] {
+				conHeaders = append(conHeaders, p)
+			}
+		}
+	}
+
+	r.Header.Del("Connection")
+	if len(conHeaders) > 0 {
+		r.Header.Set("Connection", strings.Join(conHeaders, ", "))
 	}
 
 	// set configurable ClientIPHeader
@@ -135,7 +162,6 @@ func addHeaders(r *http.Request, cfg config.Proxy, stripPath string) error {
 }
 
 var tlsver = map[uint16]string{
-	tls.VersionSSL30: "ssl30",
 	tls.VersionTLS10: "tls10",
 	tls.VersionTLS11: "tls11",
 	tls.VersionTLS12: "tls12",
@@ -156,7 +182,7 @@ func uint16base16(n uint16) string {
 	return string(b)
 }
 
-// i32toa is a faster implentation of strconv.Itoa() without importing another library
+// i32toa is a faster implementation of strconv.Itoa() without importing another library
 // https://stackoverflow.com/a/39444005
 func i32toa(n int32) string {
 	buf := [11]byte{}
