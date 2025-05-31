@@ -1,10 +1,10 @@
 FROM golang:alpine AS build
 
-ARG consul_version=1.20.2
+ARG consul_version=1.21.0
 ADD https://releases.hashicorp.com/consul/${consul_version}/consul_${consul_version}_linux_amd64.zip /usr/local/bin
 RUN cd /usr/local/bin && unzip consul_${consul_version}_linux_amd64.zip consul
 
-ARG vault_version=1.18.4
+ARG vault_version=1.19.0
 ADD https://releases.hashicorp.com/vault/${vault_version}/vault_${vault_version}_linux_amd64.zip /usr/local/bin
 RUN cd /usr/local/bin && unzip vault_${vault_version}_linux_amd64.zip
 
@@ -18,6 +18,7 @@ RUN setcap cap_net_bind_service=+ep /src/fabio
 
 FROM alpine
 RUN apk update && apk add --no-cache ca-certificates
+
 COPY --from=build /src/fabio /usr/bin
 COPY --chown=nobody:nogroup fabio.properties /etc/fabio/fabio.properties
 USER nobody:nogroup
