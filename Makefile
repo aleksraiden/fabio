@@ -21,10 +21,10 @@ GOVERSION ?= $(shell go version | awk '{print $$3;}')
 GORELEASER ?= $(shell which goreleaser)
 
 # pin versions for CI builds
-CI_CONSUL_VERSION ?= 1.21.1
-CI_VAULT_VERSION ?= 1.19.4
-CI_HUGO_VERSION ?= 0.147.1
-CI_GOBGP_VERSION ?= 3.36.0
+CI_CONSUL_VERSION ?= 1.21.3
+CI_VAULT_VERSION ?= 1.20.2
+CI_HUGO_VERSION ?= 0.148.2
+CI_GOBGP_VERSION ?= 3.37.0
 
 BETA_OSES = linux darwin
 
